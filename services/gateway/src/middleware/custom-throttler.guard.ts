@@ -17,7 +17,7 @@ export class CustomThrottlerGuard extends ThrottlerGuard {
     return `free:${(req as { ip?: string }).ip ?? 'unknown'}`;
   }
 
-  protected override getThrottlerSuffix(context: ExecutionContext): string {
+  protected getThrottlerSuffix(context: ExecutionContext): string {
     const req = context.switchToHttp().getRequest<{ url?: string }>();
     const path = req.url ?? '';
     if (path.includes('/matching') || path.includes('/negotiations')) {

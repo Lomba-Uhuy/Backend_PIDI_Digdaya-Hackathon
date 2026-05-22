@@ -32,8 +32,8 @@
 
     "baseUrl": ".",
     "paths": {
-      "@tradeconnect/shared-types": ["libs/shared-types/src/index.ts"],
-      "@tradeconnect/shared-types/*": ["libs/shared-types/src/*"]
+      "@tradeconnect/shared-types": ["libs/shared-types/dist/index.d.ts"],
+      "@tradeconnect/shared-types/*": ["libs/shared-types/dist/*"]
     }
   },
   "exclude": ["node_modules", "dist", "build", ".turbo"]

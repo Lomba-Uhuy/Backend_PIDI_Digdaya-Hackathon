@@ -5,11 +5,6 @@
     "moduleResolution": "Node",
     "outDir": "./dist",
     "rootDir": "./src",
-    "baseUrl": "./",
-    "paths": {
-      "@tradeconnect/shared-types": ["../../libs/shared-types/src"],
-      "@tradeconnect/shared-types/*": ["../../libs/shared-types/src/*"]
-    },
     "types": ["node", "vitest/globals"]
   },
   "include": ["src/**/*", "test/**/*"],
