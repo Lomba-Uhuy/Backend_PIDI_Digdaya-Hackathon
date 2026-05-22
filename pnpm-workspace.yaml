@@ -1,0 +1,5 @@
+packages:
+  - "services/gateway"
+  - "services/user-service"
+  - "services/readiness-service"
+  - "libs/*"

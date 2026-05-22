@@ -1,0 +1,34 @@
+{
+  "name": "tradeconnect",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-powered export execution infrastructure for Indonesian SMEs — hybrid microservice monorepo",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:cov": "turbo run test:cov",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint:fix": "biome check --write .",
+    "clean": "turbo run clean && rm -rf node_modules .turbo",
+    "docker:up": "docker compose up -d postgres redis",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "docker:reset": "docker compose down -v && docker compose up -d postgres redis",
+    "py:sync": "pnpm -F never run nothing || (cd services/matching-service && uv sync) && (cd ../comms-service && uv sync) && (cd ../etl-worker && uv sync)",
+    "prepare": "node -e \"process.exit(0)\""
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "turbo": "2.3.3",
+    "typescript": "5.7.2"
+  }
+}

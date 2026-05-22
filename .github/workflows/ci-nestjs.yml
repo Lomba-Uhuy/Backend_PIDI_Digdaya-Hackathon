@@ -1,0 +1,77 @@
+name: CI — NestJS Services
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'services/gateway/**'
+      - 'services/user-service/**'
+      - 'services/readiness-service/**'
+      - 'libs/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'turbo.json'
+      - 'tsconfig.base.json'
+      - '.github/workflows/ci-nestjs.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'services/gateway/**'
+      - 'services/user-service/**'
+      - 'services/readiness-service/**'
+      - 'libs/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [gateway, user-service, readiness-service]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: tc_test
+          POSTGRES_PASSWORD: tc_test
+          POSTGRES_DB: tradeconnect_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tc_test"
+          --health-interval 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Biome lint
+        run: pnpm --filter @tradeconnect/${{ matrix.service }} lint
+      - name: Type-check
+        run: pnpm --filter @tradeconnect/${{ matrix.service }} typecheck
+      - name: Test
+        env:
+          DATABASE_URL: postgres://tc_test:tc_test@localhost:5432/tradeconnect_test
+          REDIS_URL: redis://localhost:6379/0
+          BULL_REDIS_URL: redis://localhost:6379/2
+          JWT_SECRET: ci-test-secret-do-not-use
+        run: pnpm --filter @tradeconnect/${{ matrix.service }} test
+      - name: Build
+        run: pnpm --filter @tradeconnect/${{ matrix.service }} build

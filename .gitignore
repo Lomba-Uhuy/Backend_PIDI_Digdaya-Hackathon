@@ -1,0 +1,58 @@
+# ───── Node / TypeScript ─────
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.turbo/
+.next/
+coverage/
+.nyc_output/
+
+# ───── Python ─────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.python-version
+.uv-cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+coverage.xml
+
+# ───── Environment ─────
+.env
+.env.*
+!.env.example
+
+# ───── Editors / OS ─────
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ───── Logs ─────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ───── Docker / Local data ─────
+.docker-data/
+
+# ───── Build outputs / packaging ─────
+*.tgz
+*.tar.gz

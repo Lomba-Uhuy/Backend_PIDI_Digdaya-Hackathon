@@ -1,0 +1,238 @@
+name: tradeconnect
+
+services:
+  # ──────────── INFRASTRUCTURE ────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: tc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tc_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tc_pass_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-tradeconnect}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/db/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [tc-net]
+
+  redis:
+    image: redis:7-alpine
+    container_name: tc-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [tc-net]
+
+  # ──────────── NESTJS SERVICES ────────────
+  gateway:
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
+    container_name: tc-gateway
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      USER_SERVICE_URL: http://user-service:3001
+      MATCHING_SERVICE_URL: http://matching-service:8001
+      COMMS_SERVICE_URL: http://comms-service:8002
+      READINESS_SERVICE_URL: http://readiness-service:3002
+      BULL_REDIS_URL: redis://redis:6379/2
+    ports:
+      - "3000:3000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [tc-net]
+    profiles: ["full"]
+
+  user-service:
+    build:
+      context: .
+      dockerfile: services/user-service/Dockerfile
+    container_name: tc-user-service
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DATABASE_URL: postgres://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      BULL_REDIS_URL: redis://redis:6379/2
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [tc-net]
+    profiles: ["full"]
+
+  readiness-service:
+    build:
+      context: .
+      dockerfile: services/readiness-service/Dockerfile
+    container_name: tc-readiness-service
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: development
+      PORT: 3002
+      DATABASE_URL: postgres://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [tc-net]
+    profiles: ["full"]
+
+  # ──────────── PYTHON SERVICES ────────────
+  matching-service:
+    build:
+      context: ./services/matching-service
+      dockerfile: Dockerfile
+    container_name: tc-matching-service
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      APP_ENV: development
+      DATABASE_URL_ASYNC: postgresql+asyncpg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      REDIS_URL: redis://redis:6379/3
+      CELERY_BROKER_URL: redis://redis:6379/4
+      CELERY_RESULT_BACKEND: redis://redis:6379/5
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - model_cache:/root/.cache/huggingface
+    networks: [tc-net]
+    profiles: ["full"]
+
+  comms-service:
+    build:
+      context: ./services/comms-service
+      dockerfile: Dockerfile
+    container_name: tc-comms-service
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      APP_ENV: development
+      DATABASE_URL_ASYNC: postgresql+asyncpg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      REDIS_URL: redis://redis:6379/3
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [tc-net]
+    profiles: ["full"]
+
+  # ──────────── PYTHON WORKERS ────────────
+  embedding-worker:
+    build:
+      context: ./services/matching-service
+      dockerfile: Dockerfile
+    container_name: tc-embedding-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "matching_service.infrastructure.workers.celery_app", "worker", "-Q", "ai", "-l", "info", "--concurrency=2"]
+    env_file: .env
+    environment:
+      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      CELERY_BROKER_URL: redis://redis:6379/4
+      CELERY_RESULT_BACKEND: redis://redis:6379/5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - model_cache:/root/.cache/huggingface
+    networks: [tc-net]
+    profiles: ["full", "workers"]
+
+  verification-worker:
+    build:
+      context: ./services/etl-worker
+      dockerfile: Dockerfile
+    container_name: tc-verification-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "etl_worker.celery_app", "worker", "-Q", "external", "-l", "info", "--concurrency=4"]
+    env_file: .env
+    environment:
+      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      CELERY_BROKER_URL: redis://redis:6379/4
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [tc-net]
+    profiles: ["full", "workers"]
+
+  etl-worker:
+    build:
+      context: ./services/etl-worker
+      dockerfile: Dockerfile
+    container_name: tc-etl-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "etl_worker.celery_app", "worker", "-Q", "ingest", "-l", "info", "--concurrency=2"]
+    env_file: .env
+    environment:
+      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      CELERY_BROKER_URL: redis://redis:6379/4
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [tc-net]
+    profiles: ["full", "workers"]
+
+  # ──────────── MONITORING ────────────
+  flower:
+    image: mher/flower:2.0
+    container_name: tc-flower
+    restart: unless-stopped
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/4
+      FLOWER_PORT: "5555"
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+    networks: [tc-net]
+    profiles: ["full", "obs"]
+
+volumes:
+  postgres_data:
+  redis_data:
+  model_cache:
+
+networks:
+  tc-net:
+    driver: bridge
