@@ -1,0 +1,1022 @@
+openapi: 3.0.3
+info:
+  title: TradeConnect API
+  description: |
+    Platform ekspor-impor yang menghubungkan UMKM Indonesia dengan pembeli internasional.
+
+    **Arsitektur:**
+    - Gateway (3000): Auth + HTTP proxy
+    - User Service (3001): UMKM & Product management
+    - Matching Service (8001): AI buyer discovery via pgvector
+    - Comms Service (8002): RAG-powered negotiation assistant
+    - Readiness Service (3002): Pricing & fraud detection
+
+    **Authentication:** JWT Bearer token di header `Authorization: Bearer {token}`
+  version: 2.0.0
+  contact:
+    name: TradeConnect Team
+    email: support@tradeconnect.id
+  license:
+    name: Proprietary
+    url: https://tradeconnect.id
+
+servers:
+  - url: http://localhost:3000
+    description: Gateway (development)
+  - url: http://localhost:3001
+    description: User Service (development)
+  - url: http://localhost:8001
+    description: Matching Service (development)
+  - url: http://localhost:8002
+    description: Comms Service (development)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMPONENTS - Reusable schemas
+# ══════════════════════════════════════════════════════════════════════════════
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /auth/login
+
+  schemas:
+    # ────────────────────────────────── AUTH ──────────────────────────────────
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: umkm@example.com
+        password:
+          type: string
+          format: password
+          example: Kuat123!Sekali
+
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        refresh_token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        expires_in:
+          type: integer
+          example: 3600
+        user_id:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+
+    # ────────────────────────────────── UMKM ──────────────────────────────────
+
+    CreateUMKMRequest:
+      type: object
+      required: [legal_name, nib, owner_name, owner_email, industry]
+      properties:
+        legal_name:
+          type: string
+          minLength: 3
+          maxLength: 255
+          example: "CV Cinta Rasa Indonesia"
+        nib:
+          type: string
+          pattern: "^[0-9]{16}$"
+          example: "1234567890123456"
+        owner_name:
+          type: string
+          example: "Budi Santoso"
+        owner_email:
+          type: string
+          format: email
+          example: "budi@cintarasa.id"
+        owner_phone:
+          type: string
+          example: "+62812345678"
+        company_address:
+          type: string
+          example: "Jl. Merdeka No. 123, Yogyakarta"
+        city:
+          type: string
+          example: "Yogyakarta"
+        province:
+          type: string
+          example: "DI Yogyakarta"
+        industry:
+          type: string
+          enum: [coffee, handicraft, furniture, food, textile, cosmetic, seafood, other]
+          example: "coffee"
+        monthly_production_capacity:
+          type: integer
+          description: "Kapasitas produksi per bulan dalam unit"
+          example: 5000
+        website:
+          type: string
+          format: uri
+          example: "https://cintarasa.id"
+
+    UMKMResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        legal_name:
+          type: string
+        nib:
+          type: string
+        owner_name:
+          type: string
+        verification_status:
+          type: string
+          enum: [pending, verified, rejected]
+          example: "pending"
+        industry:
+          type: string
+        monthly_production_capacity:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        oss_rba_data:
+          type: object
+          nullable: true
+          description: "Data dari OSS RBA (dipopulasi setelah verifikasi)"
+          properties:
+            nib_valid:
+              type: boolean
+            business_name:
+              type: string
+            kbli:
+              type: string
+            status:
+              type: string
+
+    # ────────────────────────────────── PRODUK ────────────────────────────────
+
+    CreateProductRequest:
+      type: object
+      required: [name, description, moq, price_min, price_max]
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 255
+          example: "Kopi Arabika Gayo Grade A"
+        description:
+          type: string
+          maxLength: 5000
+          example: |
+            Kopi arabika premium dari Aceh Gayo.
+            Tinggi tempat tanam 1200-1800 mdpl memberikan cita rasa kompleks dengan catatan
+            cokelat, buah beri, dan sedikit asam jeruk.
+            Pengolahan semi-washed, dipanggang sempurna untuk specialty coffee.
+        category:
+          type: string
+          example: "Kopi"
+        hs_code:
+          type: string
+          pattern: "^[0-9]{6,10}$"
+          example: "090121"
+        moq:
+          type: integer
+          description: "Minimum Order Quantity dalam kg"
+          example: 50
+        price_min:
+          type: number
+          format: float
+          description: "Harga minimum per kg dalam USD"
+          example: 5.50
+        price_max:
+          type: number
+          format: float
+          description: "Harga maksimum per kg dalam USD"
+          example: 6.50
+        hpp:
+          type: number
+          format: float
+          description: "Harga Pokok Produksi (sensitif, hanya untuk internal)"
+          example: 3.50
+        monthly_capacity:
+          type: integer
+          description: "Kapasitas produksi bulanan dalam kg"
+          example: 10000
+        certifications:
+          type: array
+          items:
+            type: string
+            enum: [organic, fair_trade, rfa, halal, iso22000, bpom, other]
+          example: ["organic", "fair_trade"]
+        packaging_type:
+          type: string
+          enum: [bag, box, container, custom]
+          example: "bag"
+        storage_conditions:
+          type: string
+          example: "Ruangan tertutup, suhu 18-22°C, kelembaban 60-70%"
+        shipping_ports:
+          type: array
+          items:
+            type: string
+          example: ["Tanjung Priok", "Soekarno-Hatta Airport"]
+        photos:
+          type: array
+          items:
+            type: string
+            format: uri
+          maxItems: 5
+          example: ["https://storage.tradeconnect.id/product1.jpg"]
+
+    ProductResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        umkm_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        hs_code:
+          type: string
+        moq:
+          type: integer
+        price_min:
+          type: number
+          price_max:
+          type: number
+        monthly_capacity:
+          type: integer
+        certifications:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    # ────────────────────────── HS CLASSIFIER ─────────────────────────────────
+
+    HSClassifyRequest:
+      type: object
+      required: [description]
+      properties:
+        description:
+          type: string
+          minLength: 3
+          maxLength: 5000
+          example: |
+            Kopi arabika roasted whole bean dari Gayo Aceh.
+            Specialty grade, fermentasi 72 jam, dried natural, roasted medium.
+            Flavor notes: cokelat dark, buah beri, hint jeruk.
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 3
+          description: "Jumlah top candidates yang dikembalikan"
+
+    HSClassifyResponse:
+      type: object
+      properties:
+        hs_code:
+          type: string
+          example: "090121"
+        description:
+          type: string
+          example: "coffee, roasted, not decaffeinated"
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          example: 0.94
+        top_k:
+          type: array
+          items:
+            type: object
+            properties:
+              hs_code:
+                type: string
+              description:
+                type: string
+              confidence:
+                type: number
+                format: float
+          example:
+            - hs_code: "090121"
+              description: "coffee, roasted, not decaffeinated"
+              confidence: 0.94
+            - hs_code: "0901"
+              description: "coffee, whether or not roasted"
+              confidence: 0.78
+            - hs_code: "2101"
+              description: "coffee extracts and essences"
+              confidence: 0.65
+
+    # ────────────────────────── BUYER MATCHING ───────────────────────────────
+
+    MatchingRequest:
+      type: object
+      required: [product_id]
+      properties:
+        product_id:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440001"
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 10
+          description: "Jumlah buyer yang dikembalikan"
+        country_filter:
+          type: array
+          items:
+            type: string
+            pattern: "^[A-Z]{2}$"
+          example: ["DE", "NL", "US", "JP"]
+          description: "Kode ISO 2 negara untuk filter (optional)"
+
+    MatchingResult:
+      type: object
+      properties:
+        buyer_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Global Premium Imports GmbH"
+        country:
+          type: string
+          example: "DE"
+        hs_codes:
+          type: array
+          items:
+            type: string
+          example: ["0901", "090121", "2101"]
+        credibility_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: "Skor kepercayaan buyer (0-1)"
+          example: 0.87
+        similarity_score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: "Skor kesamaan semantic dengan produk"
+          example: 0.91
+        distance:
+          type: number
+          format: float
+          description: "Jarak cosine (pgvector)"
+          example: 0.095
+        explanation:
+          type: string
+          description: "Penjelasan dalam Bahasa Indonesia mengapa buyer cocok"
+          example: |
+            Buyer ini adalah importer kopi specialty Eropa yang mencari arabika
+            berkualitas tinggi dari Indonesia. Mereka memiliki track record baik
+            dalam importasi kopi Gayo dan Mandheling. Volume impor 30-50 MT/tahun
+            cocok dengan kapasitas UMKM Anda.
+        is_synthetic:
+          type: boolean
+          description: "True jika ini buyer sintetis (untuk demo)"
+          example: false
+
+    MatchingResponse:
+      type: array
+      items:
+        $ref: "#/components/schemas/MatchingResult"
+
+    # ────────────────────── NEGOTIATION DRAFT ────────────────────────────────
+
+    DraftNegotiationRequest:
+      type: object
+      required: [inquiry_text, product_id]
+      properties:
+        inquiry_text:
+          type: string
+          minLength: 10
+          maxLength: 10000
+          example: |
+            Halo,
+
+            Kami tertarik dengan kopi Gayo Anda. Bisakah Anda memberikan quotation
+            untuk 500kg kopi roasted whole bean? Kami ingin tahu harga FOB, lead time,
+            dan payment terms yang Anda tawarkan.
+
+            Terima kasih,
+            Hans Mueller
+            Global Premium Imports GmbH
+        product_id:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440001"
+        buyer_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: "Optional: ID buyer dari matching results"
+
+    DraftNegotiationResponse:
+      type: object
+      properties:
+        draft_en:
+          type: string
+          description: "Draf balasan dalam Bahasa Inggris profesional"
+          example: |
+            Dear Mr. Mueller,
+
+            Thank you for your interest in our Gayo Arabika coffee. We are delighted
+            to provide you with a quotation for 500kg of our premium roasted whole bean:
+
+            **QUOTATION SUMMARY:**
+            - Product: Gayo Arabika Roasted Whole Bean (Grade A)
+            - Quantity: 500 kg
+            - Price: USD 6.00/kg FOB Tanjung Priok
+            - Total Value: USD 3,000 FOB
+            - Lead Time: 25 working days from order confirmation
+            - Payment Terms: T/T 30% deposit, 70% against copy Bill of Lading
+            - Packaging: 20kg bags, 25 bags per carton
+
+            This is our best price for this volume. For larger commitments (1000kg+),
+            we can offer better pricing at USD 5.75/kg.
+
+            We look forward to working with you.
+
+            Best regards,
+            CV Cinta Rasa Indonesia
+        strategy_id:
+          type: string
+          example: "rag_rfq_v1"
+          description: "ID strategi negosiasi yang digunakan"
+        rationale_id:
+          type: string
+          description: "Penjelasan strategi dalam Bahasa Indonesia untuk UMKM"
+          example: |
+            ANALISIS STRATEGI:
+
+            Permintaan ini adalah RFQ (Request for Quotation) dari pembeli serius.
+            Buyer meminta quotation untuk 500kg, ini adalah volume test order yang wajar.
+
+            TAKTIK YANG DIGUNAKAN:
+            1. **Price Anchoring**: Kami anchor di USD 6.00 (harga penawaran awal).
+               Ini di atas target (USD 5.50) tapi masuk akal untuk volume ini.
+
+            2. **Volume Incentive**: Kami tawarkan diskon untuk 1000kg+ (USD 5.75).
+               Ini mendorong pembeli untuk order lebih besar tanpa immediate discount.
+
+            3. **Standar Payment**: T/T 30/70 adalah standard untuk first order.
+               Ini melindungi kita karena 70% sudah diterima saat B/L ada.
+
+            4. **Lead Time Realistis**: 25 hari adalah reasonable dan memberi buffer.
+
+            TAKTIK DEFENSIF:
+            - Tidak menyebutkan floor price (USD 3.50)
+            - Tidak menyebutkan kapasitas sebenarnya (bisa diminta lebih saat negosiasi)
+            - Fokus pada "best price" untuk mencegah counter offer terlalu drastis
+            - Tidak memberikan volume discount langsung (save for negotiation)
+        warnings:
+          type: array
+          items:
+            type: string
+          example: []
+          description: "Peringatan jika ada risiko dalam draf"
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: "Confidence score draf negosiasi"
+          example: 0.92
+
+    # ────────────────────── PRICING & READINESS ──────────────────────────────
+
+    PricingCalculatorRequest:
+      type: object
+      required: [hpp, moq, destination_country]
+      properties:
+        hpp:
+          type: number
+          format: float
+          description: "Harga Pokok Produksi (production cost) per unit"
+          example: 3.50
+        moq:
+          type: integer
+          description: "Quantity yang akan dihitung"
+          example: 500
+        destination_country:
+          type: string
+          pattern: "^[A-Z]{2}$"
+          example: "DE"
+        packaging_cost_per_unit:
+          type: number
+          format: float
+          default: 0.25
+          example: 0.25
+        origin_port:
+          type: string
+          default: "Tanjung Priok"
+          example: "Tanjung Priok"
+        incoterm:
+          type: string
+          enum: [EXW, FOB, CFR, CIF, DAP]
+          default: "FOB"
+          example: "FOB"
+
+    PricingCalculatorResponse:
+      type: object
+      properties:
+        hpp:
+          type: number
+          format: float
+          example: 3.50
+        packaging_cost:
+          type: number
+          format: float
+          example: 0.25
+        margin_profit:
+          type: number
+          format: float
+          description: "Target margin (25% default)"
+          example: 0.9375
+        origin_charges:
+          type: number
+          format: float
+          description: "Local charges: transport, THC, documentation"
+          example: 0.50
+        fob_price:
+          type: number
+          format: float
+          description: "FOB price per unit"
+          example: 5.1875
+        ocean_freight:
+          type: number
+          format: float
+          description: "Estimated ocean freight per unit"
+          example: 0.30
+        cfr_price:
+          type: number
+          format: float
+          description: "CFR price (FOB + freight)"
+          example: 5.4875
+        insurance_cost:
+          type: number
+          format: float
+          description: "Insurance cost (0.2% of CFR)"
+          example: 0.011
+        cif_price:
+          type: number
+          format: float
+          description: "CIF price (CFR + insurance)"
+          example: 5.4985
+        benchmark_un_comtrade:
+          type: number
+          format: float
+          description: "Average export price per unit dari UN Comtrade"
+          example: 5.2
+        is_competitive:
+          type: boolean
+          description: "True jika harga kompetitif vs benchmark"
+          example: true
+        notes:
+          type: string
+          example: "Harga Anda USD 5.20/kg masih di atas benchmark UN Comtrade untuk produk sejenis ke Jerman"
+
+    RedFlagDetectionRequest:
+      type: object
+      required: [inquiry_text]
+      properties:
+        inquiry_text:
+          type: string
+          minLength: 10
+          maxLength: 10000
+        buyer_country:
+          type: string
+          pattern: "^[A-Z]{2}$"
+          nullable: true
+
+    RedFlagDetectionResponse:
+      type: object
+      properties:
+        risk_level:
+          type: string
+          enum: [GREEN, YELLOW, RED]
+          example: "GREEN"
+        score:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          example: 0.1
+        flags_detected:
+          type: array
+          items:
+            type: object
+            properties:
+              flag_id:
+                type: string
+              severity:
+                type: string
+                enum: [INFO, WARNING, CRITICAL]
+              description:
+                type: string
+          example: []
+        recommendations:
+          type: array
+          items:
+            type: string
+          example:
+            - "Buyer terlihat legitimate berdasarkan language dan specificity"
+            - "Pastikan selalu gunakan T/T atau L/C untuk pembayaran"
+
+    # ────────────────────────── ERROR RESPONSE ───────────────────────────────
+
+    ErrorResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+          example: 400
+        message:
+          type: string
+          example: "Bad Request"
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+          example:
+            - field: "email"
+              message: "Invalid email format"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PATHS - API Endpoints
+# ══════════════════════════════════════════════════════════════════════════════
+
+paths:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # GATEWAY (3000) - Authentication
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  /auth/login:
+    post:
+      summary: Login UMKM
+      description: Mendapatkan JWT access token dan refresh token
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        200:
+          description: Login berhasil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        401:
+          description: Email atau password salah
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/refresh:
+    post:
+      summary: Refresh Access Token
+      description: Menggunakan refresh token untuk mendapatkan access token baru
+      tags: [Authentication]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        200:
+          description: Token refresh berhasil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # USER SERVICE (3001) - UMKM & Products
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  /api/v1/umkm:
+    post:
+      summary: Registrasi UMKM Baru
+      description: Mendaftar UMKM baru ke platform TradeConnect
+      tags: [UMKM Management]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUMKMRequest"
+      responses:
+        201:
+          description: UMKM berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UMKMResponse"
+        400:
+          description: Validasi gagal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      summary: Dapatkan Detail UMKM
+      description: Mengambil informasi UMKM yang login
+      tags: [UMKM Management]
+      security:
+        - bearerAuth: []
+      responses:
+        200:
+          description: Data UMKM
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UMKMResponse"
+
+  /api/v1/products:
+    post:
+      summary: Buat Produk Baru
+      description: Membuat listing produk baru untuk ekspor
+      tags: [Product Management]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductRequest"
+      responses:
+        201:
+          description: Produk berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductResponse"
+        400:
+          description: Validasi gagal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      summary: Dapatkan Daftar Produk
+      description: Mengambil semua produk milik UMKM yang login
+      tags: [Product Management]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: skip
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        200:
+          description: Daftar produk
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  products:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ProductResponse"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # MATCHING SERVICE (8001) - AI Buyer Discovery
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  /api/v1/hs-classifier/classify:
+    post:
+      summary: Klasifikasi Kode HS Otomatis
+      description: |
+        Menggunakan NLP untuk mengklasifikasi deskripsi produk ke kode HS
+        (Harmonized System) yang sesuai. Gunakan untuk verifikasi atau
+        prediksi kode HS dari deskripsi produk baru.
+      tags: [HS Classification]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HSClassifyRequest"
+      responses:
+        200:
+          description: Klasifikasi berhasil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HSClassifyResponse"
+        400:
+          description: Deskripsi terlalu pendek atau invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/matching/match:
+    post:
+      summary: Temukan Pembeli (AI Semantic Matching)
+      description: |
+        Menemukan pembeli potensial menggunakan pgvector ANN search.
+        Sistem mencari pembeli yang:
+        1. Produk-nya cocok dengan HS code
+        2. Semantic match tinggi dengan deskripsi produk
+        3. Credibility score baik
+
+        **Catatan:** Untuk hasil optimal, pastikan produk sudah memiliki embedding
+        (dipopulasi setelah product creation via ETL worker).
+      tags: [Buyer Matching]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MatchingRequest"
+      responses:
+        200:
+          description: Daftar pembeli cocok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MatchingResponse"
+        404:
+          description: Produk tidak ditemukan atau embedding belum tersedia
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # COMMS SERVICE (8002) - RAG Negotiation Assistant
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  /api/v1/negotiations/draft:
+    post:
+      summary: Buat Draf Balasan Negosiasi (RAG-powered)
+      description: |
+        Menggunakan RAG (Retrieval-Augmented Generation) + Claude LLM
+        untuk membuat draf balasan profesional dalam Bahasa Inggris.
+
+        **Fitur:**
+        - Retrieving relevant export knowledge base entries
+        - Generating professional negotiation response
+        - Guardrails untuk melindungi floor price & BATNA
+        - Penjelasan strategi dalam Bahasa Indonesia
+
+        **Input:** Inquiry/email dari pembeli dalam Bahasa Inggris atau Indonesia.
+        **Output:** Draf balasan + strategi negosiasi.
+      tags: [Deal Communication]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DraftNegotiationRequest"
+      responses:
+        200:
+          description: Draf negosiasi berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DraftNegotiationResponse"
+        400:
+          description: Input tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # READINESS SERVICE (3002) - Pricing & Risk Assessment
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  /api/v1/pricing/calculate:
+    post:
+      summary: Kalkulator Harga Ekspor (FOB, CFR, CIF)
+      description: |
+        Menghitung harga ekspor dari HPP hingga CIF dengan mempertimbangkan:
+        - Biaya packaging
+        - Margin keuntungan
+        - Local charges (transport, THC, docs)
+        - Ocean freight estimate
+        - Asuransi
+
+        Juga membandingkan dengan UN Comtrade export unit value untuk
+        memastikan harga kompetitif.
+      tags: [Deal Readiness]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingCalculatorRequest"
+      responses:
+        200:
+          description: Perhitungan harga berhasil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingCalculatorResponse"
+
+  /api/v1/fraud/detect:
+    post:
+      summary: Deteksi Red Flag & Risiko Pembeli
+      description: |
+        NLP-powered red flag detection untuk mengidentifikasi:
+        - Pembeli dengan reputasi tidak baik
+        - Indikasi fraud (overpayment scam, advance fee, dll)
+        - Rute pengiriman mencurigakan
+        - Bank di jurisdiksi berisiko tinggi
+        - Tekanan pembayaran tunai ke offshore account
+
+        Mengembalikan risk level (GREEN/YELLOW/RED) dan rekomendasi.
+      tags: [Deal Readiness]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedFlagDetectionRequest"
+      responses:
+        200:
+          description: Analisis risiko selesai
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedFlagDetectionResponse"
+
+tags:
+  - name: Authentication
+    description: Login dan token management
+  - name: UMKM Management
+    description: Registrasi dan profil UMKM
+  - name: Product Management
+    description: Manajemen produk ekspor
+  - name: HS Classification
+    description: Otomatis klasifikasi kode HS (Harmonized System)
+  - name: Buyer Matching
+    description: AI semantic matching untuk menemukan pembeli
+  - name: Deal Communication
+    description: RAG-powered negotiation assistant
+  - name: Deal Readiness
+    description: Pricing calculator dan fraud detection
