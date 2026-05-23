@@ -12,10 +12,12 @@ import re
 from dataclasses import dataclass
 
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from comms_service.core.config import settings
 from comms_service.core.guardrails import GuardrailEngine, GuardrailViolation
 from comms_service.infrastructure.llm.anthropic_client import get_llm
+from comms_service.infrastructure.rag.knowledge_base import KnowledgeBaseRetriever
 
 log = structlog.get_logger(__name__)
 
@@ -83,9 +85,11 @@ _INTENT_PATTERNS: dict[str, re.Pattern[str]] = {
 class NegotiationRAGService:
     MAX_REGEN_ATTEMPTS = 2
 
-    def __init__(self) -> None:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
         self._guardrails = GuardrailEngine()
         self._llm = get_llm()
+        self._kb = KnowledgeBaseRetriever(session)
 
     async def draft_reply(
         self,
@@ -171,15 +175,30 @@ class NegotiationRAGService:
         return "general"
 
     async def _retrieve_knowledge(self, query: str, intent: str) -> str:
-        """Retrieve top-k documents from export_knowledge_base via pgvector.
+        """Retrieve top-k documents from export_knowledge_base.
 
-        Stubbed for now — real retrieval lands once the KB is seeded.
+        Uses text search (always works after seeding) with vector search
+        upgrade path. Returns a formatted context string for the LLM prompt.
         """
-        log.debug("rag.knowledge_retrieval.stub", intent=intent)
-        return (
-            "(Knowledge base not yet seeded — see infra/db/init.sql for the schema "
-            "and scripts/seed-knowledge-base.py to populate.)"
-        )
+        try:
+            entries = await self._kb.search_by_text(
+                query=query,
+                intent=intent,
+                top_k=4,
+            )
+            context = KnowledgeBaseRetriever.format_context(entries)
+            log.info(
+                "rag.knowledge_retrieved",
+                intent=intent,
+                entries=len(entries),
+            )
+            return context
+        except Exception as e:  # noqa: BLE001
+            log.warning("rag.knowledge_retrieval_error", error=str(e))
+            return (
+                "Catatan: Gagal mengambil konteks dari basis pengetahuan. "
+                "Berikan respons berdasarkan praktik terbaik ekspor umum."
+            )
 
     def _parse_response(self, raw: str) -> tuple[str, str]:
         separator = "---INDONESIAN EXPLANATION---"

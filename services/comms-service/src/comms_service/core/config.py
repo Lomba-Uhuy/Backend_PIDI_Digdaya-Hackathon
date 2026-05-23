@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
 
-    llm_model: str = "claude-sonnet-4-5"
+    llm_model: str = "claude-sonnet-4-6"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2048
 

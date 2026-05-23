@@ -37,7 +37,8 @@ async def draft_reply(
     # Here we load via DB read with stub fallback so the service is usable in dev.
     umkm_ctx = await load_umkm_context(session, product_id=body.product_id, user_id=x_user_id)
 
-    svc = NegotiationRAGService()
+    # Pass the session so the RAG service can access the knowledge base
+    svc = NegotiationRAGService(session=session)
     result = await svc.draft_reply(
         inquiry_text=body.inquiry_text,
         umkm_context=umkm_ctx,
