@@ -1,18 +1,25 @@
 """Guardrail engine — validates LLM output before returning to user.
 
-Three checks:
-  1. FLOOR_PRICE_LEAK   — any number within ±10% of floor price
-  2. DESPERATE_LANGUAGE — submissive / desperate phrasing patterns
-  3. BATNA_DISCLOSURE   — text contains the seller's BATNA description
+Four checks:
+  1. FLOOR_PRICE_LEAK   — any number within ±10% of floor price (leak of internal cost)
+  2. BELOW_FLOOR_PRICE  — price-context number explicitly below HPP (below-cost offer)
+  3. DESPERATE_LANGUAGE — submissive / desperate phrasing patterns
+  4. BATNA_DISCLOSURE   — text contains the seller's BATNA description
 
 CRITICAL: floor price and BATNA are NEVER passed into LLM prompts as literal
 values. They live only in the validator, which checks the LLM output.
+
+sanitize_draft() handles the "replace below-floor prices with placeholder" requirement:
+after max regeneration attempts, any residual below-floor price figures are
+replaced with [PRICE_RANGE_ON_REQUEST] to prevent accidental under-pricing.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 from typing import Literal
+
+BELOW_FLOOR_PLACEHOLDER = "[PRICE_RANGE_ON_REQUEST]"
 
 
 @dataclass
@@ -33,6 +40,19 @@ _DESPERATE_PATTERNS: tuple[re.Pattern[str], ...] = (
 # Match numeric values: 1234 | 1,234 | 1.234.567 | 1 234 (no decimals here — we want integers)
 _NUMBER_RE = re.compile(r"\b\d{1,3}(?:[,.\s]\d{3})+\b|\b\d{4,}\b")
 
+# Price-context numbers: number preceded or followed by currency indicator within a short window.
+# Group 1 captures currency-prefix numbers; group 2 captures currency-suffix numbers.
+_PRICE_CONTEXT_RE = re.compile(
+    r"""
+    (?:USD|IDR|EUR|GBP|\$|€|£)\s*               # currency prefix
+    (\d{1,3}(?:[,.\s]\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)   # the number
+    |
+    (\d{1,3}(?:[,.\s]\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)\s*  # the number
+    (?:USD|IDR|EUR|GBP|per\s+unit|per\s+kg|/\s*(?:unit|kg|pcs?|piece|ton))  # unit/currency suffix
+    """,
+    re.I | re.X,
+)
+
 
 def _parse_number(s: str) -> float | None:
     """Parse various number formats to float."""
@@ -43,6 +63,16 @@ def _parse_number(s: str) -> float | None:
     cleaned = cleaned.replace(",", "").replace(".", "")
     try:
         return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _parse_price_number(raw: str) -> float | None:
+    """Parse a number that appeared in price context (may have decimals like 5.50)."""
+    cleaned = re.sub(r"\s", "", raw)
+    # If it looks like a decimal price (e.g. "5.50", "12.00") keep the decimal
+    try:
+        return float(cleaned.replace(",", ""))
     except ValueError:
         return None
 
@@ -58,9 +88,10 @@ class GuardrailEngine:
     ) -> list[GuardrailViolation]:
         violations: list[GuardrailViolation] = []
 
-        # Check 1: floor price leak (±10%)
         if floor_price and floor_price > 0:
             low, high = floor_price * 0.90, floor_price * 1.10
+
+            # Check 1: floor price leak (number ≈ floor_price — reveals internal cost basis)
             for match in _NUMBER_RE.finditer(draft):
                 num = _parse_number(match.group(0))
                 if num is not None and low <= num <= high:
@@ -78,7 +109,31 @@ class GuardrailEngine:
                     )
                     break  # one floor-price violation is enough to require regen
 
-        # Check 2: desperate language
+            # Check 2: below-floor price in price context (offer price below HPP)
+            for match in _PRICE_CONTEXT_RE.finditer(draft):
+                raw_num = match.group(1) or match.group(2)
+                if raw_num is None:
+                    continue
+                num = _parse_price_number(raw_num)
+                if num is not None and 0 < num < floor_price * 0.90:
+                    violations.append(
+                        GuardrailViolation(
+                            violation_id="BELOW_FLOOR_PRICE",
+                            description=f"Draft contains a price ({num}) below HPP floor ({floor_price})",
+                            warning_message=(
+                                "Draf menyebut harga di bawah HPP. "
+                                "Harga akan diganti dengan placeholder aman."
+                            ),
+                            remediation_hint=(
+                                "Replace the specific price figure with a range or placeholder such as "
+                                f"'{BELOW_FLOOR_PLACEHOLDER}'. Never commit to prices below your cost basis."
+                            ),
+                            severity="CRITICAL",
+                        )
+                    )
+                    break
+
+        # Check 3: desperate language
         for pat in _DESPERATE_PATTERNS:
             if pat.search(draft):
                 violations.append(
@@ -95,7 +150,7 @@ class GuardrailEngine:
                 )
                 break
 
-        # Check 3: BATNA disclosure
+        # Check 4: BATNA disclosure
         if batna:
             batna_normalized = batna.strip().lower()
             if batna_normalized and batna_normalized in draft.lower():
@@ -112,3 +167,25 @@ class GuardrailEngine:
                 )
 
         return violations
+
+    def sanitize_draft(self, draft: str, floor_price: float | None) -> str:
+        """Replace below-floor price figures with a safe placeholder.
+
+        Called as a last resort after max regeneration attempts. Ensures the final
+        draft never surfaces an accidental below-HPP price commitment even if the
+        LLM persists after two regeneration cycles.
+        """
+        if not floor_price or floor_price <= 0:
+            return draft
+
+        def _replace_if_below_floor(m: re.Match[str]) -> str:
+            raw_num = m.group(1) or m.group(2)
+            if raw_num is None:
+                return m.group(0)
+            num = _parse_price_number(raw_num)
+            if num is not None and 0 < num < floor_price * 0.90:
+                # Replace only the number part within the full match
+                return m.group(0).replace(raw_num, BELOW_FLOOR_PLACEHOLDER, 1)
+            return m.group(0)
+
+        return _PRICE_CONTEXT_RE.sub(_replace_if_below_floor, draft)
