@@ -52,9 +52,28 @@ async function bootstrap(): Promise<void> {
   // OpenAPI / Swagger
   const swaggerConfig = new DocumentBuilder()
     .setTitle('TradeConnect Gateway')
-    .setDescription('AI-Powered Export Execution Infrastructure — Gateway')
+    .setDescription(
+      `AI-Powered Export Execution Infrastructure — Gateway API
+
+## How to authenticate
+
+1. **Register** a new account via \`POST /api/v1/auth/register\` (one-time)
+   _or_ **Log in** via \`POST /api/v1/auth/login\` if you already have an account.
+2. Copy the \`accessToken\` from the response.
+3. Click the **Authorize 🔒** button at the top of this page.
+4. In the **bearer (http, Bearer)** field, paste the token and click **Authorize**.
+5. All protected endpoints will now send \`Authorization: Bearer <token>\` automatically.
+
+> Access tokens expire according to \`JWT_EXPIRES\` env var (default 1 day).
+> Use \`refreshToken\` to obtain a new pair without re-authenticating.`,
+    )
     .setVersion('0.1.0')
-    .addBearerAuth()
+    .addBearerAuth({
+      type: 'http',
+      scheme: 'bearer',
+      bearerFormat: 'JWT',
+      description: 'Paste the accessToken returned by /auth/login or /auth/register',
+    })
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('docs', app, document);
