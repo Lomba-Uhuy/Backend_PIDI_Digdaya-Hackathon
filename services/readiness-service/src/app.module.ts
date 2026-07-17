@@ -6,6 +6,8 @@ import { LoggerModule } from 'nestjs-pino';
 import { PricingModule } from './pricing/pricing.module.js';
 import { FraudModule } from './fraud/fraud.module.js';
 import { DocumentModule } from './document/document.module.js';
+import { NibModule } from './nib/nib.module.js';
+import { MarketIntelligenceModule } from './market-intelligence/market-intelligence.module.js';
 import { HealthController } from './common/health.controller.js';
 
 @Module({
@@ -28,6 +30,8 @@ import { HealthController } from './common/health.controller.js';
     PricingModule,
     FraudModule,
     DocumentModule,
+    NibModule,
+    MarketIntelligenceModule,
   ],
   controllers: [HealthController],
 })
