@@ -2,7 +2,7 @@ import {
   pgTable, uuid, varchar, text, timestamp,
   integer, decimal, index,
 } from 'drizzle-orm/pg-core';
-import { umkm } from './umkm.schema.js';
+import { umkm } from './umkm.schema';
 
 export const products = pgTable(
   'product',
