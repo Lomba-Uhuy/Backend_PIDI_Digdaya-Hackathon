@@ -33,6 +33,7 @@ class Settings(BaseSettings):
 
     embedding_model: str = "intfloat/multilingual-e5-large"
     embedding_dimensions: int = 1024
+    hf_token: str | None = None
 
     prometheus_enabled: bool = True
     otel_service_name: str = "matching-service"
