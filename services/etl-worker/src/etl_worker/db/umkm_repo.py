@@ -19,8 +19,8 @@ def update_umkm_verification_result(
     verified_score: float,
     status: str,
 ) -> None:
-    Session = get_session_factory()
-    with Session() as session:
+    session_factory = get_session_factory()
+    with session_factory() as session:
         session.execute(
             text(
                 """
