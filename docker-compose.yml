@@ -14,7 +14,10 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # 00-init.sql  → schema + extensions (runs first, alphabetical order)
       - ./infra/db/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      # 01-seed-knowledge-base.sql → export KB seed data (runs second, only on first DB init)
+      - ./infra/db/seed-knowledge-base.sql:/docker-entrypoint-initdb.d/01-seed-knowledge-base.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -26,7 +29,7 @@ services:
     image: redis:7-alpine
     container_name: tc-redis
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
     ports:
       - "6379:6379"
     volumes:
@@ -59,6 +62,12 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     networks: [tc-net]
     profiles: ["full"]
 
@@ -74,6 +83,10 @@ services:
       PORT: 3001
       DATABASE_URL: postgres://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
       BULL_REDIS_URL: redis://redis:6379/2
+      OSS_PUBLIC_NIB_URL: ${OSS_PUBLIC_NIB_URL:-https://api-prd.oss.go.id/v1/reg/public/nib}
+      OSS_PUBLIC_USER_KEY: ${OSS_PUBLIC_USER_KEY:-}
+      OSS_PUBLIC_RECAPTCHA_RESPONSE: ${OSS_PUBLIC_RECAPTCHA_RESPONSE:-}
+      OSS_PUBLIC_COOKIE: ${OSS_PUBLIC_COOKIE:-}
     ports:
       - "3001:3001"
     depends_on:
@@ -81,6 +94,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     networks: [tc-net]
     profiles: ["full"]
 
@@ -95,11 +114,22 @@ services:
       NODE_ENV: development
       PORT: 3002
       DATABASE_URL: postgres://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      INSW_TOKEN: ${INSW_TOKEN:-}
+      OSS_PUBLIC_NIB_URL: ${OSS_PUBLIC_NIB_URL:-https://api-prd.oss.go.id/v1/reg/public/nib}
+      OSS_PUBLIC_USER_KEY: ${OSS_PUBLIC_USER_KEY:-}
+      OSS_PUBLIC_RECAPTCHA_RESPONSE: ${OSS_PUBLIC_RECAPTCHA_RESPONSE:-}
+      OSS_PUBLIC_COOKIE: ${OSS_PUBLIC_COOKIE:-}
     ports:
       - "3002:3002"
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3002/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     networks: [tc-net]
     profiles: ["full"]
 
@@ -118,6 +148,8 @@ services:
       REDIS_URL: redis://redis:6379/3
       CELERY_BROKER_URL: redis://redis:6379/4
       CELERY_RESULT_BACKEND: redis://redis:6379/5
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
     ports:
       - "8001:8001"
     depends_on:
@@ -127,6 +159,12 @@ services:
         condition: service_healthy
     volumes:
       - model_cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks: [tc-net]
     profiles: ["full"]
 
@@ -142,6 +180,10 @@ services:
       DATABASE_URL_ASYNC: postgresql+asyncpg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
       DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
       REDIS_URL: redis://redis:6379/3
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-claude-sonnet-4-6}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.3}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-2048}
     ports:
       - "8002:8002"
     depends_on:
@@ -149,6 +191,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     networks: [tc-net]
     profiles: ["full"]
 
@@ -165,6 +213,8 @@ services:
       DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
       CELERY_BROKER_URL: redis://redis:6379/4
       CELERY_RESULT_BACKEND: redis://redis:6379/5
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
     depends_on:
       postgres:
         condition: service_healthy
@@ -186,6 +236,7 @@ services:
     environment:
       DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
       CELERY_BROKER_URL: redis://redis:6379/4
+      CELERY_RESULT_BACKEND: redis://redis:6379/5
     depends_on:
       postgres:
         condition: service_healthy
@@ -205,6 +256,7 @@ services:
     environment:
       DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
       CELERY_BROKER_URL: redis://redis:6379/4
+      CELERY_RESULT_BACKEND: redis://redis:6379/5
     depends_on:
       postgres:
         condition: service_healthy
@@ -212,6 +264,32 @@ services:
         condition: service_healthy
     networks: [tc-net]
     profiles: ["full", "workers"]
+
+  # ──────────── ONE-SHOT SEEDERS ────────────
+  kb-embedder:
+    # Reuses the matching-service image (has sentence-transformers + psycopg[binary])
+    # Generates pgvector embeddings for all export_knowledge_base rows seeded by
+    # 01-seed-knowledge-base.sql. Runs once then exits. Safe to re-run (idempotent).
+    build:
+      context: ./services/matching-service
+      dockerfile: Dockerfile
+    container_name: tc-kb-embedder
+    restart: "no"
+    command: ["python", "/scripts/embed_knowledge_base.py"]
+    env_file: .env
+    environment:
+      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
+      CHUNK_SIZE: "1800"
+      CHUNK_OVERLAP: "200"
+    volumes:
+      - ./infra/scripts:/scripts:ro
+      - model_cache:/root/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [tc-net]
+    profiles: ["full", "seed"]
 
   # ──────────── MONITORING ────────────
   flower:
