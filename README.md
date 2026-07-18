@@ -59,8 +59,8 @@ Closes **Gap A**: the gap between export-readiness and a successful first intern
 ## Quickstart (Windows 11)
 
 ```powershell
-# 1. Boot infra
-pnpm docker:up
+# 1. Boot infra only
+pnpm docker:infra
 
 # 2. Install Node deps for all NestJS services
 pnpm install
@@ -83,8 +83,8 @@ cd services/matching-service ; uv run alembic upgrade head ; cd ../..
 # 7. Start everything in dev mode
 pnpm dev
 
-# OR: Start individual services
-docker compose up -d                          # full stack
+# OR: Start full stack in Docker with latest code
+pnpm docker:up
 pnpm --filter gateway dev                     # only gateway
 cd services/matching-service ; uv run uvicorn matching_service.main:app --reload --port 8001
 ```
