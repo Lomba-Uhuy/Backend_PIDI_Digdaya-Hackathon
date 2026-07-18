@@ -13,8 +13,12 @@ COPY services/gateway/package.json services/gateway/
 
 RUN pnpm install --frozen-lockfile || pnpm install
 
-COPY services/gateway/ services/gateway/
+# Build shared-types first
+WORKDIR /repo/libs/shared-types
+RUN pnpm build
 
+# Then build gateway
+COPY services/gateway/ /repo/services/gateway/
 WORKDIR /repo/services/gateway
 RUN pnpm build
 
@@ -25,7 +29,8 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 
 COPY --from=builder /repo/package.json /repo/pnpm-lock.yaml* /repo/pnpm-workspace.yaml /repo/
-COPY --from=builder /repo/libs /repo/libs
+COPY --from=builder /repo/libs/shared-types/dist /repo/libs/shared-types/dist
+COPY --from=builder /repo/libs/shared-types/package.json /repo/libs/shared-types/
 COPY --from=builder /repo/services/gateway/package.json /repo/services/gateway/
 COPY --from=builder /repo/services/gateway/dist /repo/services/gateway/dist
 
