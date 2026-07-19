@@ -18,12 +18,14 @@ class ClassifyCandidate(BaseModel):
     hs_code: str
     description: str
     confidence: float
+    category: str
 
 
 class ClassifyResponse(BaseModel):
     hs_code: str
     description: str
     confidence: float
+    category: str
     top_k: list[ClassifyCandidate]
 
 
@@ -34,5 +36,6 @@ async def classify(body: ClassifyRequest) -> ClassifyResponse:
         hs_code=result.hs_code,
         description=result.description,
         confidence=result.confidence,
+        category=result.category,
         top_k=[ClassifyCandidate(**c) for c in result.top_k],
     )

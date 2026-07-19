@@ -1,13 +1,33 @@
 import 'reflect-metadata';
+import path from 'node:path';
 import helmet from '@fastify/helmet';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { Logger } from 'nestjs-pino';
+import postgres from 'postgres';
 
 import { AppModule } from './app.module.js';
+
+async function runMigrations(): Promise<void> {
+  const databaseUrl =
+    process.env.DATABASE_URL ?? 'postgres://tc_user:tc_pass_dev@localhost:5432/tradeconnect';
+  // dist/main.js → ../migrations (copied by Dockerfile to /repo/services/user-service/migrations)
+  const migrationsFolder = path.join(__dirname, '..', 'migrations');
+  const sql = postgres(databaseUrl, { max: 1, idle_timeout: 10 });
+  try {
+    const db = drizzle(sql);
+    await migrate(db, { migrationsFolder });
+    // biome-ignore lint/suspicious/noConsole: startup migration log
+    console.log('Database migrations applied successfully.');
+  } finally {
+    await sql.end();
+  }
+}
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -41,8 +61,10 @@ async function bootstrap(): Promise<void> {
   console.log(`User Service listening on http://0.0.0.0:${port}`);
 }
 
-bootstrap().catch((err) => {
-  // biome-ignore lint/suspicious/noConsole: fatal
-  console.error('User Service failed to start:', err);
-  process.exit(1);
-});
+runMigrations()
+  .then(() => bootstrap())
+  .catch((err) => {
+    // biome-ignore lint/suspicious/noConsole: fatal startup error
+    console.error('User Service failed to start:', err);
+    process.exit(1);
+  });

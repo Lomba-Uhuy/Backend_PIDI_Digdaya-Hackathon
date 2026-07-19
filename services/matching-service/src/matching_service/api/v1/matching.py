@@ -18,6 +18,14 @@ class MatchSearchBody(BaseModel):
     country_filter: list[str] | None = None
 
 
+class MatchBuyersBody(BaseModel):
+    embedding: list[float] = Field(min_length=1, description="Product embedding vector (1024-dim)")
+    top_k: int = Field(default=10, ge=1, le=50)
+    country_filter: list[str] | None = Field(default=None, description="ISO-2 country codes, e.g. ['DE','NL']")
+    min_volume: int | None = Field(default=None, ge=1, description="Minimum buyer MOQ filter")
+    category: str | None = Field(default=None, description="HS code prefix filter, e.g. '09' or '0901'")
+
+
 class MatchResult(BaseModel):
     buyer_id: str
     name: str
@@ -28,6 +36,22 @@ class MatchResult(BaseModel):
     distance: float
     explanation: str
     is_synthetic: bool
+    min_order_qty: int = 0
+
+
+def _to_match_result(m: object) -> MatchResult:
+    return MatchResult(
+        buyer_id=m.buyer_id,  # type: ignore[attr-defined]
+        name=m.name,  # type: ignore[attr-defined]
+        country=m.country,  # type: ignore[attr-defined]
+        hs_codes=m.hs_codes,  # type: ignore[attr-defined]
+        credibility_score=m.credibility_score,  # type: ignore[attr-defined]
+        similarity_score=m.similarity_score,  # type: ignore[attr-defined]
+        distance=m.distance,  # type: ignore[attr-defined]
+        explanation=m.explanation,  # type: ignore[attr-defined]
+        is_synthetic=m.is_synthetic,  # type: ignore[attr-defined]
+        min_order_qty=getattr(m, "min_order_qty", 0),  # type: ignore[attr-defined]
+    )
 
 
 @router.post("/match", response_model=list[MatchResult])
@@ -47,17 +71,28 @@ async def search_buyers(
             country_filter=body.country_filter,
         )
     )
-    return [
-        MatchResult(
-            buyer_id=m.buyer_id,
-            name=m.name,
-            country=m.country,
-            hs_codes=m.hs_codes,
-            credibility_score=m.credibility_score,
-            similarity_score=m.similarity_score,
-            distance=m.distance,
-            explanation=m.explanation,
-            is_synthetic=m.is_synthetic,
-        )
-        for m in matches
-    ]
+    return [_to_match_result(m) for m in matches]
+
+
+@router.post("/match-buyers", response_model=list[MatchResult])
+async def match_buyers(
+    body: MatchBuyersBody,
+    x_user_id: Annotated[str | None, Header(alias="x-user-id")] = None,
+    session=Depends(get_session),
+) -> list[MatchResult]:
+    """Accept a product embedding vector directly and return the top-K buyer shortlist.
+
+    Filters (all optional):
+    - country_filter: restrict to specific importing countries
+    - min_volume: only buyers whose MOQ >= min_volume (serious large-order buyers)
+    - category: HS code prefix to restrict to buyers active in that product category
+    """
+    svc = MatchingService(session)
+    matches = await svc.find_buyers_by_embedding(
+        embedding=body.embedding,
+        top_k=body.top_k,
+        country_filter=body.country_filter,
+        min_volume=body.min_volume,
+        category=body.category,
+    )
+    return [_to_match_result(m) for m in matches]

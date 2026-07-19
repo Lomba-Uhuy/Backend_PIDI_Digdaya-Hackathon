@@ -1,6 +1,7 @@
 """Buyer matching engine — pgvector ANN + credibility-weighted reranking."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -32,6 +33,7 @@ class BuyerMatch:
     distance: float
     explanation: str
     is_synthetic: bool
+    min_order_qty: int = 0
 
 
 class MatchingService:
@@ -60,13 +62,39 @@ class MatchingService:
         log.info("matching.search.done", product_id=request.product_id, found=len(results))
         return results
 
+    async def find_buyers_by_embedding(
+        self,
+        embedding: list[float],
+        top_k: int = 10,
+        country_filter: list[str] | None = None,
+        min_volume: int | None = None,
+        category: str | None = None,
+    ) -> list[BuyerMatch]:
+        """ANN search using a supplied embedding vector with optional metadata filters."""
+        log.info("matching.embedding_search.start", top_k=top_k, filters={
+            "country": country_filter, "min_volume": min_volume, "category": category,
+        })
+        rows = await self._ann_search_by_embedding(
+            embedding,
+            top_k,
+            country_filter=country_filter,
+            min_volume=min_volume,
+            category=category,
+        )
+        results = [self._enrich(r) for r in rows][:top_k]
+        log.info("matching.embedding_search.done", found=len(results))
+        return results
+
     async def _load_product_embedding(self, product_id: str) -> list[float] | None:
         result = await self._session.execute(
-            text("SELECT embedding FROM product_embedding WHERE product_id = :pid"),
+            # Cast to text so asyncpg always returns a plain string regardless
+            # of whether the pgvector codec is registered — avoids the
+            # list(str) → list-of-chars pitfall when codec is absent.
+            text("SELECT embedding::text FROM product_embedding WHERE product_id = :pid"),
             {"pid": product_id},
         )
         row = result.fetchone()
-        return list(row[0]) if row else None
+        return json.loads(row[0]) if row else None
 
     async def _ann_search(
         self,
@@ -74,7 +102,8 @@ class MatchingService:
         request: MatchRequest,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {
-            "q": query_embedding,
+            # asyncpg needs the vector as a string '[x, y, ...]', not a Python list.
+            "q": str(query_embedding),
             "k": request.top_k * 3,  # over-fetch for post-filter
         }
         hs_clause = ""
@@ -94,12 +123,60 @@ class MatchingService:
                 b.hs_codes        AS hs_codes,
                 b.credibility_score AS credibility_score,
                 b.is_synthetic    AS is_synthetic,
+                b.min_order_qty   AS min_order_qty,
                 (be.embedding <=> :q) AS distance
             FROM buyer_embedding be
             JOIN buyer b ON b.id = be.buyer_id
             WHERE b.is_active = TRUE
                 {hs_clause}
                 {country_clause}
+            ORDER BY be.embedding <=> :q
+            LIMIT :k
+        """)
+        rows = (await self._session.execute(sql, params)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def _ann_search_by_embedding(
+        self,
+        query_embedding: list[float],
+        top_k: int,
+        *,
+        country_filter: list[str] | None = None,
+        min_volume: int | None = None,
+        category: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "q": str(query_embedding),
+            "k": top_k * 3,
+        }
+        clauses: list[str] = []
+        if country_filter:
+            clauses.append("AND b.country = ANY(:countries)")
+            params["countries"] = country_filter
+        if min_volume is not None:
+            clauses.append("AND b.min_order_qty >= :min_volume")
+            params["min_volume"] = min_volume
+        if category:
+            clauses.append(
+                "AND EXISTS (SELECT 1 FROM unnest(b.hs_codes) hs WHERE hs LIKE :cat_prefix)"
+            )
+            params["cat_prefix"] = f"{category}%"
+
+        where_extra = "\n                ".join(clauses)
+        sql = text(f"""
+            SELECT
+                b.id              AS buyer_id,
+                b.name            AS name,
+                b.country         AS country,
+                b.hs_codes        AS hs_codes,
+                b.credibility_score AS credibility_score,
+                b.is_synthetic    AS is_synthetic,
+                b.min_order_qty   AS min_order_qty,
+                (be.embedding <=> :q) AS distance
+            FROM buyer_embedding be
+            JOIN buyer b ON b.id = be.buyer_id
+            WHERE b.is_active = TRUE
+                {where_extra}
             ORDER BY be.embedding <=> :q
             LIMIT :k
         """)
@@ -122,6 +199,7 @@ class MatchingService:
             distance=round(distance, 4),
             explanation=self._explain(raw, similarity, credibility),
             is_synthetic=bool(raw["is_synthetic"]),
+            min_order_qty=int(raw.get("min_order_qty") or 0),
         )
 
     def _explain(self, buyer: dict[str, Any], similarity: float, cred: float) -> str:

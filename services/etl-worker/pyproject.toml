@@ -60,7 +60,7 @@ mypy_path = "src"
 packages = ["etl_worker"]
 
 [[tool.mypy.overrides]]
-module = ["celery.*", "pandas.*"]
+module = ["celery.*", "kombu.*", "pandas.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -68,3 +68,8 @@ minversion = "8.0"
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers"]
 markers = ["unit", "integration"]
+
+[dependency-groups]
+dev = [
+    "celery-types>=0.26.0",
+]

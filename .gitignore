@@ -56,3 +56,17 @@ pnpm-debug.log*
 # ───── Build outputs / packaging ─────
 *.tgz
 *.tar.gz
+
+# ───── Secrets / API keys (never commit) ─────
+API-Document-Reference-Only/
+
+# ───── Stray TS build artifacts in source dirs ─────
+libs/**/src/**/*.js
+libs/**/src/**/*.d.ts
+libs/**/src/**/*.js.map
+
+# ───── Agent / tool state ─────
+.claude/
+
+# ───── Generated Python type stubs ─────
+typings/
