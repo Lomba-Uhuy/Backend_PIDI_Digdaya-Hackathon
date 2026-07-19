@@ -1,64 +1,134 @@
-import { Injectable, Logger } from '@nestjs/common';
-import Decimal from 'decimal.js';
-import type { PricingBreakdown } from '@tradeconnect/shared-types/dtos';
+import { Injectable, Logger } from "@nestjs/common";
+import type { PricingBreakdown } from "@tradeconnect/shared-types/dtos";
+import Decimal from "decimal.js";
+import { PricingBenchmarkService } from "./pricing-benchmark.service.js";
 
 export interface PricingInput {
   hpp: number;
   originCharges: number;
   qty: number;
   oceanFreight: number;
-  insuranceRate: number;
+  insuranceAmount?: number;
+  insuranceRate?: number;
+  exportDuty?: number;
+  profitMarginPct?: number;
+  hsCode?: string;
+  exchangeRate?: number;
 }
 
 @Injectable()
 export class PricingCalculatorService {
   private readonly logger = new Logger(PricingCalculatorService.name);
 
+  constructor(private readonly benchmarkService: PricingBenchmarkService) {}
+
   /**
-   * Incoterms 2020 pricing waterfall:
-   *   FOB unit  = HPP + Origin Charges
+   * Incoterms-style pricing waterfall:
+   *   FOB unit  = HPP + profit margin + domestic charges + export duty
    *   FOB total = FOB unit × qty
-   *   CFR total = FOB total + Ocean Freight
-   *   Insurance = rate × 1.10 × CFR     (industry standard: cover 110% of CFR)
-   *   CIF total = CFR + Insurance
+   *   CFR total = FOB total + international freight
+   *   CIF total = CFR + insurance
    *
    * Uses Decimal.js throughout — never `number` arithmetic for money.
    */
-  calculate(input: PricingInput): PricingBreakdown {
-    Decimal.set({ precision: 12, rounding: Decimal.ROUND_HALF_UP });
+  async calculate(input: PricingInput): Promise<PricingBreakdown> {
+    Decimal.set({ precision: 18, rounding: Decimal.ROUND_HALF_UP });
 
-    const fobUnit = new Decimal(input.hpp).plus(input.originCharges);
-    const fobTotal = fobUnit.times(input.qty);
-    const cfrTotal = fobTotal.plus(input.oceanFreight);
+    const quantity = new Decimal(input.qty);
+    const hpp = new Decimal(input.hpp);
+    const domesticCharges = new Decimal(input.originCharges);
+    const freight = new Decimal(input.oceanFreight);
+    const profitMarginPct = new Decimal(input.profitMarginPct ?? 20);
+    const exportDuty = new Decimal(input.exportDuty ?? 0);
+    const exchangeRate = new Decimal(input.exchangeRate ?? 16_000);
 
-    const insuranceAmount = new Decimal(input.insuranceRate).times('1.10').times(cfrTotal);
+    const profitAmount = hpp.times(profitMarginPct).dividedBy(100);
+    const fobUnit = hpp
+      .plus(profitAmount)
+      .plus(domesticCharges)
+      .plus(exportDuty);
+    const fobTotal = fobUnit.times(quantity);
+    const cfrTotal = fobTotal.plus(freight);
+
+    const insuranceAmount = this.resolveInsuranceAmount(input, cfrTotal);
     const cifTotal = cfrTotal.plus(insuranceAmount);
-    const perUnitCIF = cifTotal.dividedBy(input.qty);
+    const perUnitCIF = cifTotal.dividedBy(quantity);
 
-    // Margin estimate = (CIF − FOB) / CIF × 100  — represents trade overhead
-    const marginEstimate = cifTotal.minus(fobTotal).dividedBy(cifTotal).times(100);
+    const benchmark = await this.benchmarkService.lookupExportUnitValue(
+      input.hsCode,
+    );
+    const benchmarkUnitValue = benchmark
+      ? benchmark.unitValueUsd.toFixed(4)
+      : null;
+    const pricingWarning = benchmark
+      ? this.buildPricingWarning(
+          perUnitCIF,
+          benchmark.unitValueUsd,
+          input.hsCode,
+          benchmark.sampleCount,
+        )
+      : null;
+
+    const idrRate = exchangeRate;
+    const idr = {
+      fobUnit: fobUnit.times(idrRate).toFixed(0),
+      fobTotal: fobTotal.times(idrRate).toFixed(0),
+      cfrTotal: cfrTotal.times(idrRate).toFixed(0),
+      cifTotal: cifTotal.times(idrRate).toFixed(0),
+      perUnitCIF: perUnitCIF.times(idrRate).toFixed(0),
+    };
 
     this.logger.log(
-      `pricing.calc fob=${fobTotal.toFixed(2)} cfr=${cfrTotal.toFixed(2)} cif=${cifTotal.toFixed(2)}`,
+      `pricing.calc hs=${input.hsCode ?? "-"} fob=${fobTotal.toFixed(2)} cfr=${cfrTotal.toFixed(2)} cif=${cifTotal.toFixed(2)}`,
     );
 
     return {
-      fobUnit:            fobUnit.toFixed(2),
-      fobTotal:           fobTotal.toFixed(2),
-      cfrTotal:           cfrTotal.toFixed(2),
-      insuranceAmount:    insuranceAmount.toFixed(2),
-      cifTotal:           cifTotal.toFixed(2),
-      perUnitCIF:         perUnitCIF.toFixed(4),
-      benchmarkUnitValue: null, // populated by ETL when UN Comtrade data is available
-      pricingWarning:     this.checkPricingAnomaly(perUnitCIF),
-      marginEstimate:     `${marginEstimate.toFixed(2)}%`,
+      fobUnit: fobUnit.toFixed(2),
+      fobTotal: fobTotal.toFixed(2),
+      cfrTotal: cfrTotal.toFixed(2),
+      insuranceAmount: insuranceAmount.toFixed(2),
+      cifTotal: cifTotal.toFixed(2),
+      perUnitCIF: perUnitCIF.toFixed(4),
+      idr,
+      benchmarkUnitValue,
+      pricingWarning,
+      marginEstimate: `${profitMarginPct.toFixed(2)}%`,
+      exchangeRate: idrRate.toNumber(),
     };
   }
 
-  private checkPricingAnomaly(_perUnitCIF: Decimal): string | null {
-    // TODO: compare with stored Export Unit Value from UN Comtrade
-    // < Q1 historical → underpricing warning
-    // > Q3 historical → overpricing warning
-    return null;
+  private resolveInsuranceAmount(
+    input: PricingInput,
+    cfrTotal: Decimal,
+  ): Decimal {
+    if (input.insuranceAmount !== undefined) {
+      return new Decimal(input.insuranceAmount);
+    }
+
+    if (input.insuranceRate !== undefined) {
+      return new Decimal(input.insuranceRate).times("1.10").times(cfrTotal);
+    }
+
+    return new Decimal(0);
+  }
+
+  private buildPricingWarning(
+    perUnitCif: Decimal,
+    benchmarkUnitValue: number,
+    hsCode: string | undefined,
+    sampleCount: number,
+  ): string | null {
+    if (!Number.isFinite(benchmarkUnitValue) || benchmarkUnitValue <= 0) {
+      return null;
+    }
+
+    const benchmark = new Decimal(benchmarkUnitValue);
+    const deviation = perUnitCif.minus(benchmark).abs().dividedBy(benchmark);
+    if (deviation.lte(0.3)) {
+      return null;
+    }
+
+    const direction = perUnitCif.greaterThan(benchmark) ? "above" : "below";
+    return `CIF per unit is ${deviation.times(100).toFixed(1)}% ${direction} the BPS export unit value benchmark for HS ${hsCode ?? "unknown"} (n=${sampleCount}).`;
   }
 }
