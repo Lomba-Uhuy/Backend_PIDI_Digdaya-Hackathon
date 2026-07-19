@@ -161,7 +161,61 @@ HS_CORPUS: dict[str, str] = {
         "articles for conveyance packing of goods plastics; "
         "eco sustainable biodegradable packaging coconut shell bamboo alternative"
     ),
+
+    # ── JEWELRY & PRECIOUS METAL CRAFTS ──────────────────────────────────────
+    "7113": (
+        "articles of jewelry precious metal gold silver platinum; "
+        "perhiasan emas perak cincin kalung gelang anting silver jewelry handcrafted"
+    ),
+    "711311": (
+        "articles of silver jewelry sterling silver; "
+        "perhiasan perak sterling silver cincin kalung gelang anting Yogyakarta Kotagede"
+    ),
+    "711319": (
+        "articles of other precious metal jewelry gold platinum; "
+        "perhiasan emas platinum fine jewelry artisan"
+    ),
+    "7116": (
+        "articles of natural precious semi-precious stones; "
+        "batu mulia permata akik cincin batu alam gemstone jewelry"
+    ),
+    "7117": (
+        "imitation jewelry fashion accessories; "
+        "perhiasan imitasi fashion jewelry aksesoris tembaga kuningan brass copper"
+    ),
 }
+
+# Maps HS chapter (2-digit prefix) to human-readable category label.
+_HS_CATEGORIES: dict[str, str] = {
+    "09": "Kopi, Teh & Rempah",
+    "21": "Produk Olahan Makanan",
+    "18": "Kakao & Cokelat",
+    "15": "Minyak Nabati",
+    "08": "Buah & Kacang",
+    "46": "Kerajinan Anyaman & Rotan",
+    "14": "Produk Nabati",
+    "94": "Furnitur & Perlengkapan Rumah",
+    "52": "Kapas & Kain Tenun",
+    "63": "Tekstil Lainnya (Batik, Sarung)",
+    "33": "Minyak Esensial & Kosmetik",
+    "03": "Ikan & Hasil Laut",
+    "16": "Olahan Ikan & Daging",
+    "12": "Tanaman Herbal & Obat",
+    "13": "Sari & Ekstrak Tumbuhan",
+    "44": "Kayu & Produk Kayu",
+    "39": "Plastik & Kemasan",
+    "17": "Gula & Kembang Gula",
+    "19": "Produk Roti & Kue",
+    "71": "Perhiasan & Kerajinan Logam Mulia",
+    "10": "Serealia",
+    "20": "Olahan Sayur & Buah",
+    "25": "Garam & Mineral",
+}
+
+
+def _hs_to_category(hs_code: str) -> str:
+    """Return Indonesian category label for a given HS code."""
+    return _HS_CATEGORIES.get(hs_code[:2], "Produk Ekspor Lainnya")
 
 
 @dataclass
@@ -169,6 +223,7 @@ class HSCodeResult:
     hs_code: str
     description: str
     confidence: float
+    category: str
     top_k: list[dict]
 
 
@@ -188,8 +243,10 @@ class HSCodeClassifierService:
         # Local import — sentence-transformers is heavy
         from sentence_transformers import SentenceTransformer
 
+        from matching_service.core.config import settings
+
         log.info("hs_classifier.model.loading", model=self.MODEL_NAME)
-        self._model = SentenceTransformer(self.MODEL_NAME)
+        self._model = SentenceTransformer(self.MODEL_NAME, token=settings.hf_token)
         corpus_texts = [f"passage: {desc}" for desc in HS_CORPUS.values()]
         self._corpus_embeddings = self._model.encode(  # type: ignore[union-attr]
             corpus_texts,
@@ -217,6 +274,7 @@ class HSCodeClassifierService:
                 "hs_code": code,
                 "description": HS_CORPUS[code],
                 "confidence": float(similarities[idx]),
+                "category": _hs_to_category(code),
             })
 
         best = candidates[0]
@@ -225,11 +283,13 @@ class HSCodeClassifierService:
             preview=product_description[:60],
             hs_code=best["hs_code"],
             confidence=best["confidence"],
+            category=best["category"],
         )
         return HSCodeResult(
             hs_code=best["hs_code"],
             description=best["description"],
             confidence=best["confidence"],
+            category=best["category"],
             top_k=candidates,
         )
 

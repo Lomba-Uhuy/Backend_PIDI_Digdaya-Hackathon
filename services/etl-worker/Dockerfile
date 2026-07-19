@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 
-COPY pyproject.toml uv.lock* /app/
+COPY pyproject.toml README.md uv.lock* /app/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project || uv sync --no-install-project
 
@@ -24,4 +24,5 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app/src"
 
-CMD ["celery", "-A", "etl_worker.celery_app", "worker", "-l", "info", "--concurrency=2"]
+CMD ["celery", "-A", "etl_worker.celery_app", "worker", \
+     "-l", "info", "--concurrency=2", "-Q", "external,ingest"]

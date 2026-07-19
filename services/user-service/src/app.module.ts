@@ -10,6 +10,9 @@ import { DatabaseModule } from './database/database.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { UmkmModule } from './umkm/umkm.module.js';
 import { ProductModule } from './product/product.module.js';
+import { DealModule } from './deal/deal.module.js';
+import { ReminderModule } from './reminder/reminder.module.js';
+import { MarketModule } from './market/market.module.js';
 import { QueueModule } from './queue/queue.module.js';
 import { HealthController } from './common/health.controller.js';
 
@@ -67,6 +70,9 @@ import { HealthController } from './common/health.controller.js';
     QueueModule,
     UmkmModule,
     ProductModule,
+    DealModule,
+    ReminderModule,
+    MarketModule,
   ],
   controllers: [HealthController],
 })

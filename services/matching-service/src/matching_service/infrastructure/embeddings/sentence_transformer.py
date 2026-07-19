@@ -24,7 +24,7 @@ class SentenceTransformerEmbedder:
         from sentence_transformers import SentenceTransformer
 
         log.info("embedder.loading", model=self.model_name)
-        self._model = SentenceTransformer(self.model_name)
+        self._model = SentenceTransformer(self.model_name, token=settings.hf_token)
         log.info("embedder.loaded")
 
     def embed_sync(self, texts: list[str]) -> list[list[float]]:
