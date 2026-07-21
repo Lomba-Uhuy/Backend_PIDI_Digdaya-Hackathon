@@ -8,6 +8,7 @@ export interface JwtPayload {
   email: string;
   tenantId?: string;
   tier?: 'free' | 'premium';
+  role?: string;
   iat: number;
   exp: number;
 }
