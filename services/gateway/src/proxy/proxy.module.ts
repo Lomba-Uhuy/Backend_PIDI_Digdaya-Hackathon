@@ -3,6 +3,9 @@ import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module.js";
 import { AuthProxyController } from "./auth.proxy.js";
 import { DealProxyController } from "./deal.proxy.js";
+import { ActivityProxyController } from "./activity.proxy.js";
+import { AiProxyController } from "./ai.proxy.js";
+import { WorkflowProxyController } from "./workflow.proxy.js";
 import { ReminderProxyController } from "./reminder.proxy.js";
 import { MarketProxyController } from "./market.proxy.js";
 import { DocumentProxyController } from "./document.proxy.js";
@@ -17,6 +20,9 @@ import { UserProxyController } from "./user.proxy.js";
   controllers: [
     AuthProxyController,
     DealProxyController,
+    ActivityProxyController,
+    AiProxyController,
+    WorkflowProxyController,
     ReminderProxyController,
     MarketProxyController,
     UserProxyController,

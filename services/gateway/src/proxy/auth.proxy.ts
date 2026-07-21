@@ -94,4 +94,26 @@ export class AuthProxyController {
       translateAxiosError(e);
     }
   }
+
+  @Post("refresh")
+  @HttpCode(200)
+  @ApiOperation({
+    summary: "Exchange a refresh token for a fresh access+refresh pair (rotation)",
+  })
+  @ApiUnauthorizedResponse({ description: "Invalid or expired refresh token (HTTP 401)" })
+  async refresh(@Body() body: { refreshToken?: string }, @Req() req: any) {
+    try {
+      const { data } = await firstValueFrom(
+        this.http.post(`${this.upstream}/auth/refresh`, body, {
+          headers: {
+            "x-request-id": (req.headers["x-request-id"] as string) ?? crypto.randomUUID(),
+            "content-type": "application/json",
+          },
+        }),
+      );
+      return data;
+    } catch (e) {
+      translateAxiosError(e);
+    }
+  }
 }
