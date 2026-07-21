@@ -29,6 +29,31 @@ CREATE INDEX IF NOT EXISTS idx_buyer_credibility ON buyer(credibility_score DESC
 CREATE INDEX IF NOT EXISTS idx_buyer_hs_codes    ON buyer USING GIN(hs_codes);
 CREATE INDEX IF NOT EXISTS idx_buyer_synthetic   ON buyer(is_synthetic);
 
+-- Externally-sourced buyer dedup key (see migrations/20260719_tradeatlas_buyer_sync.sql)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_buyer_source_identity
+    ON buyer ((metadata ->> 'source'), (metadata ->> 'source_id'))
+    WHERE metadata ->> 'source_id' IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_buyer_source ON buyer ((metadata ->> 'source'));
+
+-- Buyer synchronisation history / resumable checkpoints.
+CREATE TABLE IF NOT EXISTS buyer_sync_run (
+    id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    provider         VARCHAR(64)  NOT NULL,
+    params           JSONB        NOT NULL DEFAULT '{}',
+    status           VARCHAR(24)  NOT NULL DEFAULT 'running',
+    last_page        INTEGER      NOT NULL DEFAULT 0,
+    total_pages      INTEGER      NOT NULL DEFAULT 0,
+    shipments_seen   INTEGER      NOT NULL DEFAULT 0,
+    buyers_upserted  INTEGER      NOT NULL DEFAULT 0,
+    buyers_skipped   INTEGER      NOT NULL DEFAULT 0,
+    error            TEXT,
+    started_at       TIMESTAMPTZ  DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ  DEFAULT NOW(),
+    finished_at      TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_buyer_sync_run_status  ON buyer_sync_run(status);
+CREATE INDEX IF NOT EXISTS idx_buyer_sync_run_started ON buyer_sync_run(started_at DESC);
+
 -- ──────────── Embedding tables (1024-dim for e5-large) ────────────
 CREATE TABLE IF NOT EXISTS buyer_embedding (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -167,6 +192,73 @@ CREATE TABLE IF NOT EXISTS deal (
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS deal_umkm_status_idx ON deal(umkm_id, status);
+
+-- ──────────── Deal messages (negotiation thread) ────────────
+DO $$ BEGIN
+  CREATE TYPE deal_message_sender AS ENUM ('umkm','buyer','system');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+CREATE TABLE IF NOT EXISTS deal_message (
+    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    deal_id    UUID NOT NULL REFERENCES deal(id) ON DELETE CASCADE,
+    sender     deal_message_sender NOT NULL,
+    text       TEXT NOT NULL,
+    intent     VARCHAR(32),
+    meta       JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS deal_message_deal_created_idx ON deal_message(deal_id, created_at);
+
+-- ──────────── Purchase orders ────────────
+DO $$ BEGIN
+  CREATE TYPE po_status AS ENUM ('draft','sent','signed');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+CREATE TABLE IF NOT EXISTS purchase_order (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    deal_id       UUID NOT NULL UNIQUE REFERENCES deal(id) ON DELETE CASCADE,
+    po_number     VARCHAR(40) NOT NULL,
+    product_id    UUID,
+    product_name  VARCHAR(255),
+    buyer_name    VARCHAR(255),
+    buyer_country VARCHAR(64),
+    incoterm      VARCHAR(16) NOT NULL DEFAULT 'CIF',
+    unit_price    NUMERIC(18,4) NOT NULL,
+    qty           INTEGER NOT NULL DEFAULT 1,
+    currency      VARCHAR(8) NOT NULL DEFAULT 'USD',
+    subtotal      NUMERIC(18,4) NOT NULL,
+    payment_terms VARCHAR(255) NOT NULL DEFAULT '30% DP / 70% L/C',
+    status        po_status NOT NULL DEFAULT 'draft',
+    signed_by     VARCHAR(255),
+    signature     TEXT,
+    signed_at     TIMESTAMPTZ,
+    terms         JSONB,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ──────────── Compliance checks ────────────
+DO $$ BEGIN
+  CREATE TYPE compliance_kind AS ENUM ('nib','fraud_scan','document');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+DO $$ BEGIN
+  CREATE TYPE compliance_status AS ENUM ('pass','warn','fail');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+CREATE TABLE IF NOT EXISTS compliance_check (
+    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    deal_id    UUID NOT NULL REFERENCES deal(id) ON DELETE CASCADE,
+    kind       compliance_kind NOT NULL,
+    label      VARCHAR(160) NOT NULL,
+    status     compliance_status NOT NULL,
+    detail     JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS compliance_check_deal_idx ON compliance_check(deal_id, created_at);
 
 -- ──────────── Reminders (M7) ────────────
 CREATE TABLE IF NOT EXISTS reminder (
