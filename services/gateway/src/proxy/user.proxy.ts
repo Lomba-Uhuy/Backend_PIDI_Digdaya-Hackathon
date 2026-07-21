@@ -190,4 +190,26 @@ export class UserProxyController {
       translateAxiosError(e);
     }
   }
+
+  @Patch("umkm/:umkmId/products/:productId/classification")
+  @ApiOperation({ summary: "Persist the RAG HS classification (primary + top-k candidates)" })
+  @ApiParam({ name: "umkmId", format: "uuid" })
+  @ApiParam({ name: "productId", format: "uuid" })
+  async saveClassification(
+    @Param("umkmId") umkmId: string,
+    @Param("productId") productId: string,
+    @Body() body: unknown,
+    @Req() req: any,
+  ) {
+    try {
+      const { data } = await firstValueFrom(
+        this.http.patch(`${this.upstream}/umkm/${umkmId}/products/${productId}/classification`, body, {
+          headers: buildForwardHeaders(req),
+        }),
+      );
+      return data;
+    } catch (e) {
+      translateAxiosError(e);
+    }
+  }
 }

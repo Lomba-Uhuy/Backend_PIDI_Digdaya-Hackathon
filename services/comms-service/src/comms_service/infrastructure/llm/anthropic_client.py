@@ -97,5 +97,11 @@ _singleton: LLMProvider | None = None
 def get_llm() -> LLMProvider:
     global _singleton
     if _singleton is None:
-        _singleton = AnthropicLLM()
+        # Prefer Gemini when configured (negotiation drafting), else Anthropic.
+        if settings.gemini_api_key:
+            from comms_service.infrastructure.llm.gemini_client import GeminiLLM
+            log.info("llm.provider.selected", provider="gemini", model=settings.gemini_model)
+            _singleton = GeminiLLM()
+        else:
+            _singleton = AnthropicLLM()
     return _singleton

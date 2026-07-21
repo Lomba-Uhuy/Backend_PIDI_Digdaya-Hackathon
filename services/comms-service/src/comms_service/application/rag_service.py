@@ -124,12 +124,19 @@ class NegotiationRAGService:
             f"Please draft a professional response."
         )
 
-        raw_output = await self._llm.complete(
-            system=system_prompt,
-            user=user_message,
-            max_tokens=settings.llm_max_tokens,
-            temperature=settings.llm_temperature,
-        )
+        if settings.anthropic_api_key:
+            raw_output = await self._llm.complete(
+                system=system_prompt,
+                user=user_message,
+                max_tokens=settings.llm_max_tokens,
+                temperature=settings.llm_temperature,
+            )
+        else:
+            raw_output = self._build_fallback_output(
+                umkm_context=umkm_context,
+                inquiry_text=inquiry_text,
+                intent=intent,
+            )
         draft_en, rationale_id = self._parse_response(raw_output)
 
         # Guardrail loop
@@ -150,6 +157,10 @@ class NegotiationRAGService:
             )
             attempts += 1
 
+        # Last-resort sanitization: replace any residual below-floor prices with placeholder.
+        # This handles the case where LLM persists after max regen attempts.
+        draft_en = self._guardrails.sanitize_draft(draft_en, umkm_context.floor_price_idr)
+
         warnings = [v.warning_message for v in violations]
         confidence = 0.85 if not violations else max(0.4, 0.85 - 0.15 * len(violations))
 
@@ -167,6 +178,41 @@ class NegotiationRAGService:
             warnings=warnings,
             confidence=confidence,
         )
+
+    def _build_fallback_output(
+        self,
+        *,
+        umkm_context: UMKMContext,
+        inquiry_text: str,
+        intent: str,
+    ) -> str:
+        buyer_request = "your inquiry"
+        if intent == "rfq":
+            buyer_request = "your quotation request"
+        elif intent == "price_negotiation":
+            buyer_request = "your price discussion"
+        elif intent == "spec_inquiry":
+            buyer_request = "your specification request"
+
+        payment_terms = ", ".join(umkm_context.accepted_payment_terms)
+        lead_time = umkm_context.lead_time_days
+        moq = umkm_context.moq
+
+        draft = f"""Dear Valued Partner,
+
+Thank you for {buyer_request} regarding our {umkm_context.product_name}. We appreciate the opportunity to discuss a potential cooperation and would be pleased to support a trial order.
+
+Our minimum order quantity is {moq} units, and our standard lead time is {lead_time} working days. To prepare an accurate quotation, please confirm your target quantity, destination port, and preferred Incoterm.
+
+We can align the offer with our standard commercial terms: {payment_terms}. If helpful, we are happy to continue the discussion and share the next steps once we receive your final order details.
+
+Best regards,
+{umkm_context.legal_name}
+
+---INDONESIAN EXPLANATION---
+Strategi: jawaban dibuat profesional dan spesifik ke produk agar terdengar natural. Saya menegaskan MOQ, lead time, dan opsi pembayaran aman, lalu meminta detail penting sebelum mengirim penawaran final supaya posisi negosiasi tetap terjaga tanpa membuka harga internal.
+---END EXPLANATION---"""
+        return draft
 
     def _classify_intent(self, text: str) -> str:
         for intent, pat in _INTENT_PATTERNS.items():

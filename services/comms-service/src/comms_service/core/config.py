@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
 
+    # Google Gemini (preferred for negotiation drafting when set). Primary model +
+    # a comma-separated fallback chain used when the primary is overloaded (503) or
+    # quota-limited (429) — so drafts still generate on a busy free tier.
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3.5-flash"
+    gemini_fallback_models: str = "gemini-3.1-flash-lite,gemini-flash-lite-latest"
+
     llm_model: str = "claude-sonnet-4-6"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2048

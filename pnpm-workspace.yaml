@@ -1,4 +1,5 @@
 packages:
+  - "apps/*"
   - "services/gateway"
   - "services/user-service"
   - "services/readiness-service"

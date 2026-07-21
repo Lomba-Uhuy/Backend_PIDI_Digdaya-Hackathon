@@ -83,6 +83,10 @@ services:
       PORT: 3001
       DATABASE_URL: postgres://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
       BULL_REDIS_URL: redis://redis:6379/2
+      # Used by the deal compliance check to verify NIB against OSS + Infiniti.
+      READINESS_SERVICE_URL: ${READINESS_SERVICE_URL:-http://readiness-service:3002}
+      # Used by the product initialization workflow (HS classification + buyer sync).
+      MATCHING_SERVICE_URL: ${MATCHING_SERVICE_URL:-http://matching-service:8001}
       OSS_PUBLIC_NIB_URL: ${OSS_PUBLIC_NIB_URL:-https://api-prd.oss.go.id/v1/reg/public/nib}
       OSS_PUBLIC_USER_KEY: ${OSS_PUBLIC_USER_KEY:-}
       OSS_PUBLIC_RECAPTCHA_RESPONSE: ${OSS_PUBLIC_RECAPTCHA_RESPONSE:-}
@@ -181,6 +185,9 @@ services:
       DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
       REDIS_URL: redis://redis:6379/3
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
+      GEMINI_FALLBACK_MODELS: ${GEMINI_FALLBACK_MODELS:-gemini-3.1-flash-lite,gemini-flash-lite-latest}
       LLM_MODEL: ${LLM_MODEL:-claude-sonnet-4-6}
       LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.3}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-2048}
