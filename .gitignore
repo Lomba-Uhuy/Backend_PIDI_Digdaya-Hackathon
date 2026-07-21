@@ -67,6 +67,12 @@ libs/**/src/**/*.js.map
 
 # ───── Agent / tool state ─────
 .claude/
+.claude/*
+!.claude/settings.json
+CLAUDE.md
 
 # ───── Generated Python type stubs ─────
 typings/
+
+.run-logs/
+.run-logs/*
