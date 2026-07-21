@@ -1,113 +1,9 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
-const NIB_API_BASE = "https://www.badanperizinan.co.id/api/v1/public";
+const INFINITI_API_BASE = "https://task.infiniti.id/api-public";
 const INSW_API_BASE = "https://api.insw.go.id/api/cms";
 const OSS_PUBLIC_NIB_URL = "https://api-prd.oss.go.id/v1/reg/public/nib";
-
-const SANDBOX_PROFILES = [
-  {
-    business_name: "CV Karya Rotan Nusantara",
-    npwp: "73.456.781.3-429.000",
-    kbli: "16291",
-    kbli_description:
-      "Industri barang dari anyaman rotan, bambu, dan sejenisnya",
-    business_scale: "KECIL",
-    registered_date: "2021-03-10",
-    certifications: ["SNI"],
-  },
-  {
-    business_name: "PT Sumber Makmur Ekspor",
-    npwp: "01.234.567.8-543.000",
-    kbli: "46339",
-    kbli_description: "Perdagangan besar barang keperluan rumah tangga lainnya",
-    business_scale: "MENENGAH",
-    registered_date: "2019-07-22",
-    certifications: ["ISO 9001"],
-  },
-  {
-    business_name: "UD Mitra Dagang Sejati",
-    npwp: "62.345.678.2-117.000",
-    kbli: "46909",
-    kbli_description: "Perdagangan besar berbagai macam barang",
-    business_scale: "KECIL",
-    registered_date: "2020-11-05",
-    certifications: [],
-  },
-  {
-    business_name: "CV Indah Kerajinan Indonesia",
-    npwp: "84.567.890.4-321.000",
-    kbli: "32901",
-    kbli_description:
-      "Industri kerajinan yang tidak diklasifikasikan di tempat lain",
-    business_scale: "KECIL",
-    registered_date: "2022-01-15",
-    certifications: ["HALAL"],
-  },
-  {
-    business_name: "PT Batik Nusantara Lestari",
-    npwp: "52.678.901.6-789.000",
-    kbli: "13131",
-    kbli_description: "Industri batik",
-    business_scale: "MENENGAH",
-    registered_date: "2018-04-30",
-    certifications: ["SNI", "ISO 9001"],
-  },
-  {
-    business_name: "CV Agro Ekspor Mandiri",
-    npwp: "31.890.123.5-654.000",
-    kbli: "01611",
-    kbli_description: "Jasa pertanian dan perkebunan",
-    business_scale: "KECIL",
-    registered_date: "2023-02-18",
-    certifications: [],
-  },
-  {
-    business_name: "UD Furnitur Jepara Jaya",
-    npwp: "91.234.560.7-012.000",
-    kbli: "31001",
-    kbli_description: "Industri furnitur dari kayu",
-    business_scale: "KECIL",
-    registered_date: "2020-08-14",
-    certifications: ["SNI"],
-  },
-  {
-    business_name: "PT Global Rempah Indonesia",
-    npwp: "45.123.456.9-876.000",
-    kbli: "10300",
-    kbli_description:
-      "Industri pengolahan dan pengawetan buah-buahan dan sayuran",
-    business_scale: "MENENGAH",
-    registered_date: "2017-12-01",
-    certifications: ["HALAL", "ISO 22000"],
-  },
-  {
-    business_name: "CV Citra Tekstil Nusantara",
-    npwp: "29.876.543.1-234.000",
-    kbli: "14201",
-    kbli_description: "Industri pakaian jadi dari tekstil",
-    business_scale: "KECIL",
-    registered_date: "2021-09-03",
-    certifications: [],
-  },
-  {
-    business_name: "PT Mebel Ekspor Makmur",
-    npwp: "68.901.234.0-567.000",
-    kbli: "31009",
-    kbli_description: "Industri furnitur lainnya",
-    business_scale: "MENENGAH",
-    registered_date: "2019-05-20",
-    certifications: ["ISO 9001"],
-  },
-] satisfies Array<{
-  business_name: string;
-  npwp: string;
-  kbli: string;
-  kbli_description: string;
-  business_scale: string;
-  registered_date: string;
-  certifications: string[];
-}>;
 
 export interface InswHistoryEntry {
   status: string;
@@ -147,6 +43,13 @@ interface BadanPerizinanResponse {
   success: boolean;
   status?: boolean;
   data?: { fields: Array<{ label: string; value: string }> };
+}
+
+// task.infiniti.id wraps the same { success, data: { fields } } payload one level
+// deeper: { status, data: <BadanPerizinanResponse> }.
+interface InfinitiResponse {
+  status?: boolean;
+  data?: BadanPerizinanResponse;
 }
 
 interface InswResponse {
@@ -200,51 +103,34 @@ export class NibVerificationService {
   }
 
   async verify(nib: string): Promise<NibVerificationResult> {
-    if (nib.length < 13) {
-      this.logger.warn("nib.demo_placeholder nib=%s → sandbox", nib);
-      return this.sandboxResult(nib);
-    }
-
-    // Step 1 + 2: badanperizinan.co.id dan public OSS RBA.
-    // Hasil keduanya digabung supaya field yang kosong di satu sumber dapat
-    // dilengkapi sumber lain.
-    const [badanPerizinan, ossPublic] = await Promise.all([
-      this.fetchBadanPerizinan(nib),
+    // Strict, evidence-based: verify against the live registries only. No mock
+    // fallback — an unverifiable NIB is reported invalid, never fabricated valid.
+    const [infiniti, ossPublic] = await Promise.all([
+      this.fetchInfiniti(nib),
       this.fetchOssPublic(nib),
     ]);
-
-    let combined = this.mergeNibSources(badanPerizinan, ossPublic);
-
-    if (!combined.is_valid) return combined;
-
-    // INSW dinonaktifkan: verifikasi cukup dari badanperizinan saja.
-    // // Step 2: INSW — double-check + status bea cukai (butuh NPWP dari step 1)
-    // if (!this.inswToken) {
-    //   this.logger.warn("insw.skip nib=%s reason=no_token", nib);
-    //   return combined;
-    // }
-    //
-    // combined = await this.mergeWithInsw(combined, this.inswToken);
-    return combined;
+    return this.mergeNibSources(infiniti, ossPublic);
   }
 
   // ── Step 1 ──────────────────────────────────────────────────────────────────
 
-  private async fetchBadanPerizinan(
-    nib: string,
-  ): Promise<NibVerificationResult> {
+  private async fetchInfiniti(nib: string): Promise<NibVerificationResult> {
     try {
-      const resp = await fetch(`${NIB_API_BASE}/nib/${nib}`, {
+      const resp = await fetch(`${INFINITI_API_BASE}/check-nib/${nib}`, {
         headers: {
           Accept: "application/json",
-          "User-Agent": "TradeConnect/1.0",
+          "X-Requested-With": "XMLHttpRequest",
+          Referer: "https://task.infiniti.id/cek-nib",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
         },
         signal: AbortSignal.timeout(10_000),
       });
-      const body = (await resp.json()) as BadanPerizinanResponse;
+      const outer = (await resp.json()) as InfinitiResponse;
+      const body = outer?.data; // inner payload has the { success, data: { fields } } shape
 
-      if (!resp.ok || !body.success) {
-        this.logger.warn("nib.not_found nib=%s", nib);
+      if (!resp.ok || outer?.status !== true || !body?.success) {
+        this.logger.warn("nib.infiniti.not_found nib=%s", nib);
         return this.invalidResult(nib);
       }
 
@@ -269,13 +155,13 @@ export class NibVerificationService {
         insw_history: [],
         oss_public_verified: false,
         oss_public_data: {},
-        verification_sources: ["badanperizinan"],
+        verification_sources: ["infiniti"],
         sandbox_mode: false,
       };
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err);
-      this.logger.warn("nib.api_down nib=%s reason=%s → sandbox", nib, reason);
-      return this.sandboxResult(nib);
+      this.logger.warn("nib.infiniti.down nib=%s reason=%s", nib, reason);
+      return this.invalidResult(nib);
     }
   }
 
@@ -455,77 +341,46 @@ export class NibVerificationService {
     };
   }
 
-  private sandboxResult(nib: string): NibVerificationResult {
-    // modulo always yields valid index — non-null assertion is safe
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const profile =
-      SANDBOX_PROFILES[Number(nib.slice(-1)) % SANDBOX_PROFILES.length]!;
-    return {
-      nib,
-      is_valid: true,
-      business_name: profile.business_name,
-      npwp: profile.npwp,
-      kbli: profile.kbli,
-      kbli_description: profile.kbli_description,
-      business_scale: profile.business_scale,
-      oss_status_aktif: "",
-      oss_status_migrasi: "",
-      oss_status_penanaman_modal: "",
-      compliance_status: "COMPLIANT",
-      registered_date: profile.registered_date,
-      certifications: profile.certifications,
-      insw_verified: false,
-      insw_kategori: "",
-      insw_history: [],
-      oss_public_verified: false,
-      oss_public_data: {},
-      verification_sources: ["sandbox"],
-      sandbox_mode: true,
-    };
-  }
-
   private mergeNibSources(
-    badanPerizinan: NibVerificationResult,
+    primary: NibVerificationResult,
     ossPublic: PartialNibResult | null,
   ): NibVerificationResult {
-    if (!ossPublic) return badanPerizinan;
+    if (!ossPublic) return primary;
 
     const sources = new Set<string>([
-      ...badanPerizinan.verification_sources,
+      ...primary.verification_sources,
       ossPublic.source,
     ]);
-    if (ossPublic.oss_public_verified) sources.delete("sandbox");
 
     return {
-      ...badanPerizinan,
-      is_valid: badanPerizinan.is_valid || ossPublic.is_valid,
+      ...primary,
+      is_valid: primary.is_valid || ossPublic.is_valid,
       business_name:
-        badanPerizinan.business_name || ossPublic.business_name || "",
-      npwp: badanPerizinan.npwp || ossPublic.npwp || "",
-      kbli: badanPerizinan.kbli || ossPublic.kbli || "",
+        primary.business_name || ossPublic.business_name || "",
+      npwp: primary.npwp || ossPublic.npwp || "",
+      kbli: primary.kbli || ossPublic.kbli || "",
       kbli_description:
-        badanPerizinan.kbli_description || ossPublic.kbli_description || "",
+        primary.kbli_description || ossPublic.kbli_description || "",
       business_scale:
-        badanPerizinan.business_scale || ossPublic.business_scale || "",
+        primary.business_scale || ossPublic.business_scale || "",
       oss_status_aktif:
-        badanPerizinan.oss_status_aktif || ossPublic.oss_status_aktif || "",
+        primary.oss_status_aktif || ossPublic.oss_status_aktif || "",
       oss_status_migrasi:
-        badanPerizinan.oss_status_migrasi || ossPublic.oss_status_migrasi || "",
+        primary.oss_status_migrasi || ossPublic.oss_status_migrasi || "",
       oss_status_penanaman_modal:
-        badanPerizinan.oss_status_penanaman_modal ||
+        primary.oss_status_penanaman_modal ||
         ossPublic.oss_status_penanaman_modal ||
         "",
       compliance_status:
-        badanPerizinan.compliance_status === "INVALID"
+        primary.compliance_status === "INVALID"
           ? ossPublic.compliance_status || "COMPLIANT"
-          : badanPerizinan.compliance_status,
+          : primary.compliance_status,
       registered_date:
-        badanPerizinan.registered_date || ossPublic.registered_date || "",
+        primary.registered_date || ossPublic.registered_date || "",
       oss_public_verified: Boolean(ossPublic.oss_public_verified),
       oss_public_data: ossPublic.oss_public_data ?? {},
       verification_sources: [...sources].filter((source) => source !== ""),
-      sandbox_mode:
-        badanPerizinan.sandbox_mode && !ossPublic.oss_public_verified,
+      sandbox_mode: false,
     };
   }
 
