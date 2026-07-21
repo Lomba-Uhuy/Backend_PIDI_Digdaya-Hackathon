@@ -6,6 +6,9 @@ import { DealProxyController } from "./deal.proxy.js";
 import { ActivityProxyController } from "./activity.proxy.js";
 import { AiProxyController } from "./ai.proxy.js";
 import { WorkflowProxyController } from "./workflow.proxy.js";
+import { SubscriptionProxyController } from "./subscription.proxy.js";
+import { PublicPlansProxyController } from "./public-plans.proxy.js";
+import { AdminProxyController } from "./admin.proxy.js";
 import { ReminderProxyController } from "./reminder.proxy.js";
 import { MarketProxyController } from "./market.proxy.js";
 import { DocumentProxyController } from "./document.proxy.js";
@@ -23,6 +26,9 @@ import { UserProxyController } from "./user.proxy.js";
     ActivityProxyController,
     AiProxyController,
     WorkflowProxyController,
+    SubscriptionProxyController,
+    PublicPlansProxyController,
+    AdminProxyController,
     ReminderProxyController,
     MarketProxyController,
     UserProxyController,

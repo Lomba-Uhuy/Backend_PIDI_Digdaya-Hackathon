@@ -2,13 +2,16 @@ import { type ExecutionContext, createParamDecorator, UnauthorizedException } fr
 
 export interface InternalUser {
   userId: string;
+  email?: string;
   tenantId?: string;
   tier?: string;
+  role?: string;
+  ip?: string;
 }
 
 /**
  * Extracts user context from headers injected by the gateway:
- *   x-user-id, x-tenant-id, x-user-tier
+ *   x-user-id, x-tenant-id, x-user-tier, x-user-role
  *
  * Internal services trust these headers because only the gateway is
  * publicly reachable and it sets them after JWT validation.
@@ -22,8 +25,11 @@ export const CurrentUser = createParamDecorator(
     }
     return {
       userId,
+      email: req.headers['x-user-email'] as string | undefined,
       tenantId: req.headers['x-tenant-id'] as string | undefined,
       tier: req.headers['x-user-tier'] as string | undefined,
+      role: req.headers['x-user-role'] as string | undefined,
+      ip: (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim(),
     };
   },
 );
