@@ -11,6 +11,8 @@ import { AuthModule } from './auth/auth.module.js';
 import { UmkmModule } from './umkm/umkm.module.js';
 import { ProductModule } from './product/product.module.js';
 import { DealModule } from './deal/deal.module.js';
+import { WorkflowModule } from './workflow/workflow.module.js';
+import { ActivityModule } from './activity/activity.module.js';
 import { ReminderModule } from './reminder/reminder.module.js';
 import { MarketModule } from './market/market.module.js';
 import { QueueModule } from './queue/queue.module.js';
@@ -71,6 +73,8 @@ import { HealthController } from './common/health.controller.js';
     UmkmModule,
     ProductModule,
     DealModule,
+    WorkflowModule,
+    ActivityModule,
     ReminderModule,
     MarketModule,
   ],

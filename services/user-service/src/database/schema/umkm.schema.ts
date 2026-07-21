@@ -2,7 +2,7 @@ import {
   pgTable, uuid, varchar, text, timestamp, boolean,
   decimal, jsonb, pgEnum, index,
 } from 'drizzle-orm/pg-core';
-import { users } from './user.schema.js';
+import { users } from './user.schema';
 
 export const verificationStatusEnum = pgEnum('verification_status', [
   'PENDING',

@@ -10,7 +10,8 @@
     "editor.formatOnSave": true,
     "editor.codeActionsOnSave": { "source.fixAll": "explicit" }
   },
-  "python.analysis.typeCheckingMode": "strict",
+  "python.analysis.extraPaths": ["services/etl-worker/src"],
+  "python.analysis.typeCheckingMode": "basic",
   "typescript.tsdk": "node_modules/typescript/lib",
   "files.exclude": {
     "**/__pycache__": true,

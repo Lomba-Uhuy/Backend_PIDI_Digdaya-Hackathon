@@ -1,8 +1,8 @@
 import {
   pgTable, uuid, varchar, text, timestamp,
-  integer, decimal, index,
+  integer, decimal, index, jsonb,
 } from 'drizzle-orm/pg-core';
-import { umkm } from './umkm.schema.js';
+import { umkm } from './umkm.schema';
 
 export const products = pgTable(
   'product',
@@ -13,6 +13,12 @@ export const products = pgTable(
     description:      text('description').notNull(),
     hsCode:           varchar('hs_code', { length: 10 }),
     hsConfidence:     decimal('hs_confidence', { precision: 5, scale: 4 }),
+    // Persisted RAG classification: primary HS + ranked top-k candidates + model.
+    // [{ hs_code, description, confidence, category }]. Written when the product
+    // is classified; the source of truth for HS candidates (no client cache).
+    hsCandidates:     jsonb('hs_candidates').notNull().default([]),
+    hsModelVersion:   varchar('hs_model_version', { length: 64 }),
+    hsClassifiedAt:   timestamp('hs_classified_at', { withTimezone: true }),
     moq:              integer('moq').notNull().default(1),
     monthlyCapacity:  integer('monthly_capacity').notNull().default(0),
     priceMin:         decimal('price_min', { precision: 18, scale: 4 }).notNull(),
