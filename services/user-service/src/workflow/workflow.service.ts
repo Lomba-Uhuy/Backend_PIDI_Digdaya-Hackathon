@@ -287,12 +287,18 @@ export class WorkflowService {
         return { metadata: { primary: data.hs_code ?? null, candidates: candidates.length } };
       }
       case 'buyer_sync': {
-        const hs = product.hsCode ?? undefined;
+        // Re-read the product: the in-memory `product` was loaded before the
+        // hs_classification stage persisted the HS code, so it is stale here.
+        const fresh = await this.db.query.products.findFirst({ where: eq(products.id, product.id) });
+        const hs = fresh?.hsCode ?? product.hsCode ?? null;
+        // matching-service requires a non-empty hs_codes list. If classification
+        // produced nothing, skip the sync honestly rather than failing the workflow.
+        if (!hs) return { metadata: { note: 'buyer sync skipped — no HS code classified' } };
         const resp = await fetch(`${MATCHING_URL}/api/v1/buyers/sync`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ hs_codes: hs ? [hs] : [], importer_countries: [] }),
-          signal: AbortSignal.timeout(15_000),
+          body: JSON.stringify({ hs_codes: [hs], importer_countries: [] }),
+          signal: AbortSignal.timeout(30_000),
         });
         if (!resp.ok) throw new Error(`buyers/sync HTTP ${resp.status}`);
         const data = (await resp.json()) as { task_id?: string; status?: string };

@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  UseGuards,
 } from "@nestjs/common";
 import {
   ApiBearerAuth,
@@ -20,6 +21,8 @@ import {
   CurrentUser,
   type InternalUser,
 } from "../common/current-user.decorator.js";
+import { Roles } from "../authz/authz.decorators.js";
+import { RolesGuard } from "../authz/roles.guard.js";
 import { CreateUmkmDto } from "./dto/create-umkm.dto.js";
 import { UpdateUmkmDto } from "./dto/update-umkm.dto.js";
 import { UmkmService } from "./umkm.service.js";
@@ -57,6 +60,8 @@ export class UmkmController {
 
   @Post()
   @HttpCode(201)
+  @UseGuards(RolesGuard)
+  @Roles("umkm") // Company creation belongs to UMKM only; admins are rejected (403).
   @ApiBody({
     type: CreateUmkmDto,
     examples: { default: { value: createUmkmExample } },
