@@ -9,7 +9,7 @@ import { users } from '../database/schema/index.js';
 export interface AuthResult {
   accessToken: string;
   refreshToken: string;
-  user: { id: string; email: string; tier: string };
+  user: { id: string; email: string; tier: string; role: string };
 }
 
 @Injectable()
@@ -31,7 +31,7 @@ export class AuthService {
       .returning();
     if (!created) throw new Error('Failed to create user');
 
-    return this.issueTokens(created.id, created.email, created.tier);
+    return this.issueTokens(created.id, created.email, created.tier, created.role);
   }
 
   async login(email: string, password: string): Promise<AuthResult> {
@@ -41,7 +41,8 @@ export class AuthService {
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
-    return this.issueTokens(user.id, user.email, user.tier);
+    await this.db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
+    return this.issueTokens(user.id, user.email, user.tier, user.role);
   }
 
   /**
@@ -58,15 +59,16 @@ export class AuthService {
     }
     const user = await this.db.query.users.findFirst({ where: eq(users.id, payload.sub) });
     if (!user || !user.isActive) throw new UnauthorizedException('User not found or inactive');
-    return this.issueTokens(user.id, user.email, user.tier);
+    // Re-read role/tier from the DB so a role change takes effect on refresh.
+    return this.issueTokens(user.id, user.email, user.tier, user.role);
   }
 
-  private async issueTokens(userId: string, email: string, tier: string): Promise<AuthResult> {
-    const payload = { sub: userId, email, tier };
+  private async issueTokens(userId: string, email: string, tier: string, role: string): Promise<AuthResult> {
+    const payload = { sub: userId, email, tier, role };
     const accessToken = await this.jwt.signAsync(payload);
     const refreshToken = await this.jwt.signAsync(payload, {
       expiresIn: this.config.get<string>('JWT_REFRESH_TOKEN_EXPIRES') ?? '14d',
     });
-    return { accessToken, refreshToken, user: { id: userId, email, tier } };
+    return { accessToken, refreshToken, user: { id: userId, email, tier, role } };
   }
 }

@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   ParseUUIDPipe,
+  UseGuards,
 } from "@nestjs/common";
 import {
   ApiBearerAuth,
@@ -20,6 +21,8 @@ import {
   CurrentUser,
   type InternalUser,
 } from "../common/current-user.decorator.js";
+import { Roles } from "../authz/authz.decorators.js";
+import { RolesGuard } from "../authz/roles.guard.js";
 import { CreateProductDto } from "./dto/create-product.dto.js";
 import { UpdateProductDto } from "./dto/update-product.dto.js";
 import { ProductService } from "./product.service.js";
@@ -67,6 +70,8 @@ export class ProductController {
 
   @Post()
   @HttpCode(201)
+  @UseGuards(RolesGuard)
+  @Roles("umkm") // Product creation belongs to UMKM only; admins are rejected (403).
   @ApiParam({
     name: "umkmId",
     format: "uuid",

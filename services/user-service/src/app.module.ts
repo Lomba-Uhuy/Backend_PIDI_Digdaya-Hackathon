@@ -15,6 +15,8 @@ import { WorkflowModule } from './workflow/workflow.module.js';
 import { ActivityModule } from './activity/activity.module.js';
 import { ReminderModule } from './reminder/reminder.module.js';
 import { MarketModule } from './market/market.module.js';
+import { SubscriptionModule } from './subscription/subscription.module.js';
+import { AdminModule } from './admin/admin.module.js';
 import { QueueModule } from './queue/queue.module.js';
 import { HealthController } from './common/health.controller.js';
 
@@ -77,6 +79,8 @@ import { HealthController } from './common/health.controller.js';
     ActivityModule,
     ReminderModule,
     MarketModule,
+    SubscriptionModule,
+    AdminModule,
   ],
   controllers: [HealthController],
 })
