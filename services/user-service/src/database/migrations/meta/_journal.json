@@ -15,6 +15,20 @@
       "when": 1784618711695,
       "tag": "0001_accumulated_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784700000000,
+      "tag": "0002_authz_rbac_subscription",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784700100000,
+      "tag": "0003_admin_audit",
+      "breakpoints": true
     }
   ]
 }
