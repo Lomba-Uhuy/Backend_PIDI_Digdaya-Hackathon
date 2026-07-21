@@ -1,5 +1,5 @@
 import { HttpService } from "@nestjs/axios";
-import { Body, Controller, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
   ApiBearerAuth,
@@ -8,8 +8,10 @@ import {
   ApiOperation,
   ApiTags,
 } from "@nestjs/swagger";
+import { SkipThrottle } from "@nestjs/throttler";
 import { firstValueFrom } from "rxjs";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard.js";
+import { BuyerSyncDto } from "./dto/buyer-sync.dto.js";
 import { HsClassifyDto } from "./dto/hs-classify.dto.js";
 import { MatchBuyersDto } from "./dto/match-buyers.dto.js";
 import { MatchingSearchDto } from "./dto/matching-search.dto.js";
@@ -95,6 +97,98 @@ export class MatchingProxyController {
     try {
       const { data } = await firstValueFrom(
         this.http.post(`${this.upstream}/api/v1/hs-classifier/classify`, body, {
+          headers: buildForwardHeaders(req),
+        }),
+      );
+      return data;
+    } catch (e) {
+      translateAxiosError(e);
+    }
+  }
+
+  @Get("buyers")
+  // Read-only DB directory listing — not an embedding/LLM call. Exclude it from the
+  // stricter 'ai-endpoints' budget (20/min) so filter/pagination bursts don't 429;
+  // the 'default' throttler (100/min) still applies.
+  @SkipThrottle({ "ai-endpoints": true })
+  @ApiOperation({
+    summary: "List/search buyers from the synchronized DB",
+    description:
+      "Reads the synchronized production buyer table (real + synthetic). Filters: q, country, hs, source, is_synthetic, min_credibility; sorting + pagination. Never proxies TradeAtlas directly.",
+  })
+  async listBuyers(@Query() query: Record<string, unknown>, @Req() req: any) {
+    try {
+      const { data } = await firstValueFrom(
+        this.http.get(`${this.upstream}/api/v1/buyers`, {
+          headers: buildForwardHeaders(req),
+          params: query,
+        }),
+      );
+      return data;
+    } catch (e) {
+      translateAxiosError(e);
+    }
+  }
+
+  @Post("buyers/sync")
+  @ApiOperation({
+    summary: "Trigger a real-buyer sync (enqueues the ETL TradeAtlas sync task)",
+    description:
+      "Dynamic: pass the product's HS codes + target markets. Enqueues etl.sync_tradeatlas_buyers; returns a task id immediately. Real buyers land in the DB and become matchable via /matching/search.",
+  })
+  @ApiBody({ type: BuyerSyncDto })
+  async syncBuyers(@Body() body: BuyerSyncDto, @Req() req: any) {
+    try {
+      const { data } = await firstValueFrom(
+        this.http.post(`${this.upstream}/api/v1/buyers/sync`, body, {
+          headers: buildForwardHeaders(req),
+        }),
+      );
+      return data;
+    } catch (e) {
+      translateAxiosError(e);
+    }
+  }
+
+  @Get("buyers/stats")
+  @SkipThrottle({ "ai-endpoints": true })
+  @ApiOperation({ summary: "Buyer directory statistics (real vs simulated, by source & country)" })
+  async buyerStats(@Req() req: any) {
+    try {
+      const { data } = await firstValueFrom(
+        this.http.get(`${this.upstream}/api/v1/buyers/stats`, {
+          headers: buildForwardHeaders(req),
+        }),
+      );
+      return data;
+    } catch (e) {
+      translateAxiosError(e);
+    }
+  }
+
+  @Get("buyers/analytics")
+  @SkipThrottle({ "ai-endpoints": true })
+  @ApiOperation({ summary: "Buyer directory analytics (credibility bands, HS, embeddings, recency)" })
+  async buyerAnalytics(@Req() req: any) {
+    try {
+      const { data } = await firstValueFrom(
+        this.http.get(`${this.upstream}/api/v1/buyers/analytics`, {
+          headers: buildForwardHeaders(req),
+        }),
+      );
+      return data;
+    } catch (e) {
+      translateAxiosError(e);
+    }
+  }
+
+  @Get("buyers/:id")
+  @SkipThrottle({ "ai-endpoints": true })
+  @ApiOperation({ summary: "Buyer detail by id (full record + source metadata)" })
+  async buyerDetail(@Param("id") id: string, @Req() req: any) {
+    try {
+      const { data } = await firstValueFrom(
+        this.http.get(`${this.upstream}/api/v1/buyers/${encodeURIComponent(id)}`, {
           headers: buildForwardHeaders(req),
         }),
       );
