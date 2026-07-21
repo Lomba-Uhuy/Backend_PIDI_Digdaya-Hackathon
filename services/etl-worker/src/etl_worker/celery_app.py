@@ -22,6 +22,7 @@ celery_app = Celery(
         "etl_worker.tasks.inatrade_task",
         "etl_worker.tasks.buyer_seeding_task",
         "etl_worker.tasks.product_seeding_task",
+        "etl_worker.tasks.tradeatlas_buyer_sync_task",
     ],
     # ── Serialization ──────────────────────────────────────────────────────
     task_serializer="json",
