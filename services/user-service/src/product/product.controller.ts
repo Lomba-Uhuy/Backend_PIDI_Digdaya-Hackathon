@@ -108,4 +108,28 @@ export class ProductController {
   ) {
     return this.productService.update(umkmId, productId, dto, user.userId);
   }
+
+  @Patch(":productId/classification")
+  @ApiParam({ name: "umkmId", format: "uuid" })
+  @ApiParam({ name: "productId", format: "uuid" })
+  @ApiOkResponse({ description: "Persist the RAG HS classification (primary + candidates)." })
+  saveClassification(
+    @Param("umkmId", ParseUUIDPipe) umkmId: string,
+    @Param("productId", ParseUUIDPipe) productId: string,
+    @Body()
+    body: {
+      hsCode?: string;
+      hsConfidence?: number;
+      candidates?: Array<{ hs_code: string; description?: string; confidence?: number; category?: string }>;
+      modelVersion?: string;
+    },
+    @CurrentUser() user: InternalUser,
+  ) {
+    return this.productService.saveClassification(umkmId, productId, user.userId, {
+      hsCode: body.hsCode,
+      hsConfidence: body.hsConfidence,
+      candidates: body.candidates ?? [],
+      modelVersion: body.modelVersion,
+    });
+  }
 }

@@ -34,6 +34,12 @@ export class DealController {
     return this.dealService.list(user.userId, { status, page: p, pageSize: ps });
   }
 
+  @Get('analytics')
+  @ApiOperation({ summary: 'Negotiation analytics (conversion, pipeline, distributions)' })
+  analytics(@CurrentUser() user: InternalUser) {
+    return this.dealService.analytics(user.userId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a single deal' })
   findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: InternalUser) {

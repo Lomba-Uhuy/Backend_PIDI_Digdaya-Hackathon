@@ -2,4 +2,8 @@ export * from './umkm.schema';
 export * from './product.schema';
 export * from './user.schema';
 export * from './deal.schema';
+export * from './deal-message.schema';
+export * from './workflow.schema';
+export * from './purchase-order.schema';
+export * from './compliance-check.schema';
 export * from './reminder.schema';

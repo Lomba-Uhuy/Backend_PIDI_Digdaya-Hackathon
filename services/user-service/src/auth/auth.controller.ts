@@ -14,6 +14,13 @@ class CredentialsDto {
   password!: string;
 }
 
+class RefreshDto {
+  @ApiProperty({ description: "A valid refresh token from login/register" })
+  @IsString()
+  @MinLength(20)
+  refreshToken!: string;
+}
+
 const authResponseExample = {
   accessToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   refreshToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
@@ -52,5 +59,12 @@ export class AuthController {
   @ApiOkResponse({ schema: { example: authResponseExample } })
   login(@Body() body: CredentialsDto) {
     return this.auth.login(body.email, body.password);
+  }
+
+  @Post("refresh")
+  @ApiBody({ type: RefreshDto })
+  @ApiOkResponse({ schema: { example: authResponseExample } })
+  refresh(@Body() body: RefreshDto) {
+    return this.auth.refresh(body.refreshToken);
   }
 }
