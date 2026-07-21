@@ -4,6 +4,7 @@ import { DRIZZLE, type DrizzleDB } from '../database/database.module.js';
 import { products, type Product } from '../database/schema/index.js';
 import { UmkmService } from '../umkm/umkm.service.js';
 import { VerificationProducer } from '../queue/verification.producer.js';
+import { WorkflowService } from '../workflow/workflow.service.js';
 import type { CreateProductDto } from './dto/create-product.dto.js';
 
 @Injectable()
@@ -12,6 +13,7 @@ export class ProductService {
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly umkmService: UmkmService,
     private readonly verificationProducer: VerificationProducer,
+    private readonly workflow: WorkflowService,
   ) {}
 
   async create(umkmId: string, dto: CreateProductDto, userId: string): Promise<Product> {
@@ -45,6 +47,9 @@ export class ProductService {
       description: `${created.name}. ${created.description}`,
       umkmId,
     });
+
+    // Kick off the centralized initialization workflow (idempotent, background).
+    void this.workflow.startForProduct(created.id, umkmId);
 
     // Strip HPP before returning
     const { hpp: _hpp, ...safe } = created;
@@ -94,6 +99,41 @@ export class ProductService {
       .returning();
     if (!updated) throw new NotFoundException(`Product ${productId} not found`);
 
+    const { hpp: _hpp, ...safe } = updated;
+    return safe as Product;
+  }
+
+  /** Persist the RAG HS classification (primary + top-k candidates) on the product. */
+  async saveClassification(
+    umkmId: string,
+    productId: string,
+    userId: string,
+    input: {
+      hsCode?: string;
+      hsConfidence?: number;
+      candidates: Array<{ hs_code: string; description?: string; confidence?: number; category?: string }>;
+      modelVersion?: string;
+    },
+  ): Promise<Product> {
+    const umkm = await this.umkmService.findById(umkmId);
+    if (umkm.userId !== userId) throw new ForbiddenException('Not your UMKM');
+    const existing = await this.db.query.products.findFirst({ where: eq(products.id, productId) });
+    if (!existing || existing.umkmId !== umkmId) {
+      throw new NotFoundException(`Product ${productId} not found`);
+    }
+    const [updated] = await this.db
+      .update(products)
+      .set({
+        ...(input.hsCode ? { hsCode: input.hsCode } : {}),
+        ...(input.hsConfidence != null ? { hsConfidence: input.hsConfidence.toString() } : {}),
+        hsCandidates: input.candidates ?? [],
+        hsModelVersion: input.modelVersion ?? 'multilingual-e5-large',
+        hsClassifiedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(products.id, productId))
+      .returning();
+    if (!updated) throw new NotFoundException(`Product ${productId} not found`);
     const { hpp: _hpp, ...safe } = updated;
     return safe as Product;
   }

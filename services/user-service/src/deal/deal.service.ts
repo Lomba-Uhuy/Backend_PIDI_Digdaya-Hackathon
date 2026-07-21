@@ -1,5 +1,5 @@
 import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, count, desc, eq } from 'drizzle-orm';
+import { and, count, desc, eq, sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.module.js';
 import { deals, umkm, type Deal } from '../database/schema/index.js';
 import type { CreateDealDto } from './dto/create-deal.dto.js';
@@ -10,6 +10,17 @@ export interface DealListResult {
   total: number;
   page: number;
   pageSize: number;
+}
+
+export interface DealAnalytics {
+  total: number;
+  open: number;
+  closed: number;
+  conversionRate: number; // closed / total, 0..1
+  avgCloseDays: number | null;
+  avgAgreedPrice: number | null;
+  byStatus: { status: string; count: number }[];
+  byCountry: { country: string; count: number }[];
 }
 
 @Injectable()
@@ -90,5 +101,48 @@ export class DealService {
       .returning();
     if (!updated) throw new NotFoundException(`Deal ${id} not found`);
     return updated;
+  }
+
+  /** Negotiation analytics aggregated from the caller's real deal records. */
+  async analytics(userId: string): Promise<DealAnalytics> {
+    const umkmId = await this.umkmIdForUser(userId);
+
+    const totalsRows = (await this.db.execute(sql`
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status IN ('contacted','negotiating','compliance','po_sent'))::int AS open,
+        COUNT(*) FILTER (WHERE status = 'po_signed')::int AS closed,
+        AVG(EXTRACT(EPOCH FROM (updated_at - created_at))) FILTER (WHERE status = 'po_signed') AS avg_close_seconds,
+        AVG(agreed_price::numeric) FILTER (WHERE agreed_price IS NOT NULL) AS avg_price
+      FROM deal WHERE umkm_id = ${umkmId}
+    `)) as unknown as Array<Record<string, unknown>>;
+
+    const statusRows = (await this.db.execute(sql`
+      SELECT status::text AS status, COUNT(*)::int AS count
+      FROM deal WHERE umkm_id = ${umkmId} GROUP BY status ORDER BY count DESC
+    `)) as unknown as Array<{ status: string; count: number }>;
+
+    const countryRows = (await this.db.execute(sql`
+      SELECT buyer_country AS country, COUNT(*)::int AS count
+      FROM deal WHERE umkm_id = ${umkmId} AND buyer_country IS NOT NULL AND buyer_country <> ''
+      GROUP BY buyer_country ORDER BY count DESC LIMIT 8
+    `)) as unknown as Array<{ country: string; count: number }>;
+
+    const t = totalsRows[0] ?? {};
+    const total = Number(t.total ?? 0);
+    const closed = Number(t.closed ?? 0);
+    const avgCloseSeconds = t.avg_close_seconds != null ? Number(t.avg_close_seconds) : null;
+    const avgPrice = t.avg_price != null ? Number(t.avg_price) : null;
+
+    return {
+      total,
+      open: Number(t.open ?? 0),
+      closed,
+      conversionRate: total > 0 ? closed / total : 0,
+      avgCloseDays: avgCloseSeconds != null ? Number((avgCloseSeconds / 86400).toFixed(2)) : null,
+      avgAgreedPrice: avgPrice != null ? Number(avgPrice.toFixed(2)) : null,
+      byStatus: statusRows.map((r) => ({ status: r.status, count: Number(r.count) })),
+      byCountry: countryRows.map((r) => ({ country: r.country, count: Number(r.count) })),
+    };
   }
 }

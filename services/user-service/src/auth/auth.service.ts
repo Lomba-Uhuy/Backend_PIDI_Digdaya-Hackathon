@@ -44,6 +44,23 @@ export class AuthService {
     return this.issueTokens(user.id, user.email, user.tier);
   }
 
+  /**
+   * Exchange a valid refresh token for a fresh access+refresh pair (rotation).
+   * Reuses the existing JWT mechanism — the refresh token is a longer-lived JWT
+   * signed with the same secret. Rejects if invalid/expired or the user is gone.
+   */
+  async refresh(refreshToken: string): Promise<AuthResult> {
+    let payload: { sub: string; email: string; tier: string };
+    try {
+      payload = await this.jwt.verifyAsync(refreshToken);
+    } catch {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+    const user = await this.db.query.users.findFirst({ where: eq(users.id, payload.sub) });
+    if (!user || !user.isActive) throw new UnauthorizedException('User not found or inactive');
+    return this.issueTokens(user.id, user.email, user.tier);
+  }
+
   private async issueTokens(userId: string, email: string, tier: string): Promise<AuthResult> {
     const payload = { sub: userId, email, tier };
     const accessToken = await this.jwt.signAsync(payload);
