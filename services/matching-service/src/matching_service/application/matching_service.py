@@ -9,6 +9,8 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from matching_service.infrastructure.embeddings.sentence_transformer import get_embedder
+
 log = structlog.get_logger(__name__)
 
 
@@ -52,7 +54,7 @@ class MatchingService:
     async def find_buyers(self, request: MatchRequest) -> list[BuyerMatch]:
         log.info("matching.search.start", product_id=request.product_id, top_k=request.top_k)
 
-        embedding = await self._load_product_embedding(request.product_id)
+        embedding = await self._ensure_product_embedding(request.product_id)
         if embedding is None:
             log.warning("matching.no_embedding", product_id=request.product_id)
             return []
@@ -95,6 +97,49 @@ class MatchingService:
         )
         row = result.fetchone()
         return json.loads(row[0]) if row else None
+
+    async def _ensure_product_embedding(self, product_id: str) -> list[float] | None:
+        """Return the product embedding, generating + caching it on-demand if the
+        async embedding job has not produced one yet. Guarantees matching works as
+        soon as a product exists, not only after the background embedder runs."""
+        emb = await self._load_product_embedding(product_id)
+        if emb is not None:
+            return emb
+
+        row = (
+            await self._session.execute(
+                text("SELECT name, description FROM product WHERE id = :pid"),
+                {"pid": product_id},
+            )
+        ).fetchone()
+        if row is None:
+            return None
+        src = f"{row[0] or ''}. {row[1] or ''}".strip(". ").strip()
+        if not src:
+            return None
+
+        log.info("matching.embed_on_demand", product_id=product_id)
+        embedder = get_embedder()
+        vec = embedder.embed_sync([f"query: {src}"])[0]
+
+        # Cache for subsequent searches (best-effort — never fail the match on a write error).
+        try:
+            await self._session.execute(
+                text(
+                    """
+                    INSERT INTO product_embedding (product_id, model, embedding, created_at, updated_at)
+                    VALUES (:pid, :model, CAST(:emb AS vector), NOW(), NOW())
+                    ON CONFLICT (product_id)
+                    DO UPDATE SET embedding = CAST(:emb AS vector), model = :model, updated_at = NOW()
+                    """
+                ),
+                {"pid": product_id, "model": embedder.model_name, "emb": str(vec)},
+            )
+            await self._session.commit()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("matching.embed_cache_failed", product_id=product_id, exc=str(exc))
+            await self._session.rollback()
+        return vec
 
     async def _ann_search(
         self,
