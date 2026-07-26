@@ -120,7 +120,7 @@ class MatchingService:
 
         log.info("matching.embed_on_demand", product_id=product_id)
         embedder = get_embedder()
-        vec = embedder.embed_sync([f"query: {src}"])[0]
+        vec = embedder.embed_sync([src])[0]
 
         # Cache for subsequent searches (best-effort — never fail the match on a write error).
         try:

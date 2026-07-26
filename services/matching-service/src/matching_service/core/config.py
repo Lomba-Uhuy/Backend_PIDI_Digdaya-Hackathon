@@ -31,8 +31,10 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/4"
     celery_result_backend: str = "redis://localhost:6379/5"
 
-    embedding_model: str = "intfloat/multilingual-e5-large"
+    embedding_provider: str = "gemini"  # "gemini" or "local"
+    embedding_model: str = "gemini-embedding-2"
     embedding_dimensions: int = 1024
+    gemini_api_key: str | None = None
     hf_token: str | None = None
 
     prometheus_enabled: bool = True

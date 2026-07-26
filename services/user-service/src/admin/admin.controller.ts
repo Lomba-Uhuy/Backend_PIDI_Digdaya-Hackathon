@@ -47,6 +47,15 @@ export class AdminController {
     return this.admin.listUsers({ search, page: toInt(page, 1), limit: toInt(limit, 20), role, status });
   }
 
+  @Post('users')
+  @ApiOperation({ summary: 'Create a user account (default role: umkm)' })
+  createUser(
+    @Body() body: { email: string; password: string; role?: string; plan?: string },
+    @CurrentUser() u: InternalUser,
+  ) {
+    return this.admin.createUser(body, this.actor(u));
+  }
+
   @Get('users/:id')
   user(@Param('id') id: string) {
     return this.admin.getUser(id);
