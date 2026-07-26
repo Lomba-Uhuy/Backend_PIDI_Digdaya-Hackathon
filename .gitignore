@@ -1,3 +1,8 @@
+# ───── Markdown: ignore all .md EXCEPT README.md (at any depth) ─────
+# Keeps scratch/design notes out of the repo; README files are always kept.
+*.md
+!README.md
+
 # ───── Node / TypeScript ─────
 node_modules/
 dist/

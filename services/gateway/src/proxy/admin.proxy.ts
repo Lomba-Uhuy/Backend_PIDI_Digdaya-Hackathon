@@ -45,6 +45,9 @@ export class AdminProxyController {
   @Get("users")
   users(@Req() req: any, @Query() q: Record<string, unknown>) { return this.fwd("get", "/users", req, undefined, q); }
 
+  @Post("users")
+  createUser(@Body() body: unknown, @Req() req: any) { return this.fwd("post", "/users", req, body); }
+
   @Get("users/:id")
   user(@Param("id") id: string, @Req() req: any) { return this.fwd("get", `/users/${id}`, req); }
 

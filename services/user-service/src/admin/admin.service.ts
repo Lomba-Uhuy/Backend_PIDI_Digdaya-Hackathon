@@ -1,4 +1,5 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 import { eq, sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../database/database.module.js';
 import { users, subscriptions, productWorkflows } from '../database/schema/index.js';
@@ -245,6 +246,38 @@ export class AdminService {
   }
 
   // ── Admin mutations (audited) ────────────────────────────────────────────────
+  async createUser(
+    input: { email: string; password: string; role?: string; plan?: string },
+    actor: AuditActor,
+  ) {
+    const email = (input.email ?? '').trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new BadRequestException('Invalid email address');
+    if (!input.password || input.password.length < 8) {
+      throw new BadRequestException('Password must be at least 8 characters');
+    }
+    const role = input.role ?? 'umkm';
+    if (!isRole(role)) throw new BadRequestException(`Unknown role '${role}'`);
+    const plan = input.plan ?? 'free';
+    if (!PLANS[plan]) throw new BadRequestException(`Unknown plan '${plan}'`);
+
+    const existing = await this.db.query.users.findFirst({ where: eq(users.email, email) });
+    if (existing) throw new ConflictException('Email already registered');
+
+    const passwordHash = await bcrypt.hash(input.password, 12);
+    const [created] = await this.db.insert(users).values({ email, passwordHash, role }).returning();
+    if (!created) throw new Error('Failed to create user');
+    // Provision the subscription so the user shows up consistently across the admin.
+    await this.db.insert(subscriptions).values({ userId: created.id, plan }).onConflictDoNothing();
+
+    await this.audit.record(actor, {
+      action: 'user.created',
+      resourceType: 'user',
+      resourceId: created.id,
+      after: { email, role, plan },
+    });
+    return { id: created.id, email: created.email, role: created.role, plan };
+  }
+
   async setUserRole(userId: string, role: string, actor: AuditActor) {
     if (!isRole(role)) throw new BadRequestException(`Unknown role '${role}'`);
     const target = await this.db.query.users.findFirst({ where: eq(users.id, userId) });
