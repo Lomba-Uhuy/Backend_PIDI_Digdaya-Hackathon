@@ -30,11 +30,9 @@ dependencies = [
     "redis>=5.2.0",
     "celery>=5.4.0",
 
-    # AI / ML
-    "sentence-transformers>=3.3.0",
-    "torch>=2.5.0",
+    # AI / Embeddings (cloud API — no local torch/model needed)
+    "google-genai>=1.0.0",
     "numpy>=2.1.0",
-    "huggingface-hub>=0.26.0",
 
     # Observability
     "structlog>=24.4.0",
@@ -92,7 +90,7 @@ packages = ["matching_service"]
 exclude = ["alembic/versions/"]
 
 [[tool.mypy.overrides]]
-module = ["celery.*", "sentence_transformers.*", "torch.*", "pgvector.*"]
+module = ["celery.*", "google.*", "pgvector.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

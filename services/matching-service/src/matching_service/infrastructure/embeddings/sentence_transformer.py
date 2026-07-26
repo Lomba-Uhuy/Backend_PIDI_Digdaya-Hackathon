@@ -1,10 +1,14 @@
-"""Embedding provider — sentence-transformers singleton.
+"""Embedding provider — factory + sentence-transformers fallback.
 
-Following E5 convention:
-  - 'query: ...' for the query side (product description / buyer search)
-  - 'passage: ...' for the passage side (buyer profile / HS code corpus)
+The get_embedder() factory returns either:
+  - GeminiEmbedder  (when EMBEDDING_PROVIDER=gemini)  — cloud API, no torch needed
+  - SentenceTransformerEmbedder (when EMBEDDING_PROVIDER=local) — local model, heavy
+
+Default is "gemini" for cloud-native, lightweight operation.
 """
 from __future__ import annotations
+
+from typing import Protocol
 
 import structlog
 
@@ -13,7 +17,17 @@ from matching_service.core.config import settings
 log = structlog.get_logger(__name__)
 
 
+class Embedder(Protocol):
+    """Common interface for all embedding providers."""
+    model_name: str
+
+    def embed_sync(self, texts: list[str]) -> list[list[float]]: ...
+    async def embed(self, texts: list[str]) -> list[list[float]]: ...
+
+
 class SentenceTransformerEmbedder:
+    """Local sentence-transformers model (heavy — requires torch + model download)."""
+
     def __init__(self, model_name: str | None = None) -> None:
         self.model_name = model_name or settings.embedding_model
         self._model = None  # lazy
@@ -37,11 +51,18 @@ class SentenceTransformerEmbedder:
         return self.embed_sync(texts)
 
 
-_singleton: SentenceTransformerEmbedder | None = None
+_singleton: Embedder | None = None
 
 
-def get_embedder() -> SentenceTransformerEmbedder:
+def get_embedder() -> Embedder:
+    """Factory: returns the configured embedding provider (Gemini or local)."""
     global _singleton
     if _singleton is None:
-        _singleton = SentenceTransformerEmbedder()
+        if settings.embedding_provider == "gemini":
+            from matching_service.infrastructure.embeddings.gemini_embedder import GeminiEmbedder
+            log.info("embedder.factory", provider="gemini", model=settings.embedding_model)
+            _singleton = GeminiEmbedder()  # type: ignore[assignment]
+        else:
+            log.info("embedder.factory", provider="local", model=settings.embedding_model)
+            _singleton = SentenceTransformerEmbedder()  # type: ignore[assignment]
     return _singleton

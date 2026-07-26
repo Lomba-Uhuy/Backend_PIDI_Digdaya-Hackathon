@@ -2,6 +2,9 @@ name: tradeconnect
 
 services:
   # ──────────── INFRASTRUCTURE ────────────
+  # Postgres is now hosted on Supabase. This local container is kept for
+  # offline / air-gapped development only. Activate with:
+  #   docker compose --profile local-db up
   postgres:
     image: pgvector/pgvector:pg16
     container_name: tc-postgres
@@ -14,9 +17,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # 00-init.sql  → schema + extensions (runs first, alphabetical order)
       - ./infra/db/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
-      # 01-seed-knowledge-base.sql → export KB seed data (runs second, only on first DB init)
       - ./infra/db/seed-knowledge-base.sql:/docker-entrypoint-initdb.d/01-seed-knowledge-base.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
@@ -24,6 +25,7 @@ services:
       timeout: 5s
       retries: 10
     networks: [tc-net]
+    profiles: ["local-db"]
 
   redis:
     image: redis:7-alpine
@@ -81,11 +83,9 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3001
-      DATABASE_URL: postgres://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      DATABASE_URL: ${DATABASE_URL}
       BULL_REDIS_URL: redis://redis:6379/2
-      # Used by the deal compliance check to verify NIB against OSS + Infiniti.
       READINESS_SERVICE_URL: ${READINESS_SERVICE_URL:-http://readiness-service:3002}
-      # Used by the product initialization workflow (HS classification + buyer sync).
       MATCHING_SERVICE_URL: ${MATCHING_SERVICE_URL:-http://matching-service:8001}
       OSS_PUBLIC_NIB_URL: ${OSS_PUBLIC_NIB_URL:-https://api-prd.oss.go.id/v1/reg/public/nib}
       OSS_PUBLIC_USER_KEY: ${OSS_PUBLIC_USER_KEY:-}
@@ -94,8 +94,6 @@ services:
     ports:
       - "3001:3001"
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -117,7 +115,7 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3002
-      DATABASE_URL: postgres://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      DATABASE_URL: ${DATABASE_URL}
       INSW_TOKEN: ${INSW_TOKEN:-}
       OSS_PUBLIC_NIB_URL: ${OSS_PUBLIC_NIB_URL:-https://api-prd.oss.go.id/v1/reg/public/nib}
       OSS_PUBLIC_USER_KEY: ${OSS_PUBLIC_USER_KEY:-}
@@ -125,9 +123,7 @@ services:
       OSS_PUBLIC_COOKIE: ${OSS_PUBLIC_COOKIE:-}
     ports:
       - "3002:3002"
-    depends_on:
-      postgres:
-        condition: service_healthy
+    depends_on: {}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3002/health || exit 1"]
       interval: 10s
@@ -147,22 +143,20 @@ services:
     env_file: .env
     environment:
       APP_ENV: development
-      DATABASE_URL_ASYNC: postgresql+asyncpg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
-      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      DATABASE_URL_ASYNC: ${DATABASE_URL_ASYNC}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
       REDIS_URL: redis://redis:6379/3
       CELERY_BROKER_URL: redis://redis:6379/4
       CELERY_RESULT_BACKEND: redis://redis:6379/5
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-gemini}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-gemini-embedding-2}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     ports:
       - "8001:8001"
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - model_cache:/root/.cache/huggingface
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
       interval: 10s
@@ -181,8 +175,8 @@ services:
     env_file: .env
     environment:
       APP_ENV: development
-      DATABASE_URL_ASYNC: postgresql+asyncpg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
-      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      DATABASE_URL_ASYNC: ${DATABASE_URL_ASYNC}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
       REDIS_URL: redis://redis:6379/3
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -194,8 +188,6 @@ services:
     ports:
       - "8002:8002"
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -217,18 +209,16 @@ services:
     command: ["celery", "-A", "matching_service.infrastructure.workers.celery_app", "worker", "-Q", "ai", "-l", "info", "--concurrency=2"]
     env_file: .env
     environment:
-      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
       CELERY_BROKER_URL: redis://redis:6379/4
       CELERY_RESULT_BACKEND: redis://redis:6379/5
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-gemini}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-gemini-embedding-2}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - model_cache:/root/.cache/huggingface
     networks: [tc-net]
     profiles: ["full", "workers"]
 
@@ -241,12 +231,10 @@ services:
     command: ["celery", "-A", "etl_worker.celery_app", "worker", "-Q", "external", "-l", "info", "--concurrency=4"]
     env_file: .env
     environment:
-      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
       CELERY_BROKER_URL: redis://redis:6379/4
       CELERY_RESULT_BACKEND: redis://redis:6379/5
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     networks: [tc-net]
@@ -261,12 +249,10 @@ services:
     command: ["celery", "-A", "etl_worker.celery_app", "worker", "-Q", "ingest", "-l", "info", "--concurrency=2"]
     env_file: .env
     environment:
-      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
       CELERY_BROKER_URL: redis://redis:6379/4
       CELERY_RESULT_BACKEND: redis://redis:6379/5
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     networks: [tc-net]
@@ -274,9 +260,9 @@ services:
 
   # ──────────── ONE-SHOT SEEDERS ────────────
   kb-embedder:
-    # Reuses the matching-service image (has sentence-transformers + psycopg[binary])
-    # Generates pgvector embeddings for all export_knowledge_base rows seeded by
-    # 01-seed-knowledge-base.sql. Runs once then exits. Safe to re-run (idempotent).
+    # Reuses the matching-service image (has google-genai + psycopg[binary])
+    # Generates pgvector embeddings for all export_knowledge_base rows via Gemini API.
+    # Runs once then exits. Safe to re-run (idempotent).
     build:
       context: ./services/matching-service
       dockerfile: Dockerfile
@@ -285,16 +271,14 @@ services:
     command: ["python", "/scripts/embed_knowledge_base.py"]
     env_file: .env
     environment:
-      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass_dev}@postgres:5432/${POSTGRES_DB:-tradeconnect}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-gemini-embedding-2}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
       CHUNK_SIZE: "1800"
       CHUNK_OVERLAP: "200"
     volumes:
       - ./infra/scripts:/scripts:ro
-      - model_cache:/root/.cache/huggingface
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks: [tc-net]
     profiles: ["full", "seed"]
 
@@ -316,7 +300,6 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  model_cache:
 
 networks:
   tc-net:
