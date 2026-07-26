@@ -146,6 +146,52 @@ export class WorkflowService {
     return this.startForProduct(productId, umkmId);
   }
 
+  /**
+   * Force a full re-run of the product's initialization workflow. Unlike
+   * `startForProduct` (which is a no-op for an already-completed workflow), this
+   * resets every stage + bumps execution_version and re-executes — used when the
+   * product's name/description changed, so the HS classification (and everything
+   * derived from it: buyers, market intelligence) must be recomputed from the new
+   * text. Starts a fresh workflow if none exists yet.
+   */
+  async rerunForProduct(productId: string, umkmId: string): Promise<ProductWorkflow> {
+    const existing = await this.db.query.productWorkflows.findFirst({
+      where: eq(productWorkflows.productId, productId),
+    });
+    if (!existing) return this.startForProduct(productId, umkmId);
+
+    await this.db
+      .update(productWorkflows)
+      .set({
+        status: 'queued',
+        failureReason: null,
+        currentStage: STAGES[0],
+        currentWorker: null,
+        retryCount: existing.retryCount + 1,
+        executionVersion: existing.executionVersion + 1,
+        startedAt: null,
+        finishedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(productWorkflows.id, existing.id));
+    await this.db
+      .update(workflowStages)
+      .set({
+        status: 'queued',
+        errorMessage: null,
+        startedAt: null,
+        finishedAt: null,
+        durationMs: null,
+        retryCount: 0,
+        jobId: null,
+        metadata: null,
+      })
+      .where(eq(workflowStages.workflowId, existing.id));
+    await this.emit(existing.id, 'WorkflowStarted', null, 'Re-inisialisasi produk (data produk diperbarui)');
+    void this.run(existing.id);
+    return existing;
+  }
+
   // ── Orchestration (background, DB is the source of truth) ──────────────────
   private async run(workflowId: string): Promise<void> {
     try {
