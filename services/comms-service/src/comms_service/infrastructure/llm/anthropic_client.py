@@ -97,11 +97,15 @@ _singleton: LLMProvider | None = None
 def get_llm() -> LLMProvider:
     global _singleton
     if _singleton is None:
-        # Prefer Gemini when configured (negotiation drafting), else Anthropic.
+        # Gemini is the primary LLM provider across TradeConnect.
         if settings.gemini_api_key:
             from comms_service.infrastructure.llm.gemini_client import GeminiLLM
             log.info("llm.provider.selected", provider="gemini", model=settings.gemini_model)
             _singleton = GeminiLLM()
-        else:
+        elif settings.anthropic_api_key:
+            log.info("llm.provider.selected", provider="anthropic", model=settings.llm_model)
             _singleton = AnthropicLLM()
-    return _singleton
+        else:
+            from comms_service.infrastructure.llm.gemini_client import GeminiLLM
+            _singleton = GeminiLLM()
+    return _singleton
