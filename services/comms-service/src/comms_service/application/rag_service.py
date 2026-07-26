@@ -137,7 +137,7 @@ class NegotiationRAGService:
             f"Please draft a professional response."
         )
 
-        if settings.anthropic_api_key:
+        if settings.gemini_api_key or settings.anthropic_api_key:
             raw_output = await self._llm.complete(
                 system=system_prompt,
                 user=user_message,
