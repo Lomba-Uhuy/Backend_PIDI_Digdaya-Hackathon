@@ -43,7 +43,7 @@ def generate_product_embedding(  # type: ignore[no-untyped-def]
     log.info("task.embed.product.start", product_id=product_id)
     try:
         embedder = get_embedder()
-        text_to_embed = f"query: {description}"
+        text_to_embed = description
         vec = embedder.embed_sync([text_to_embed])[0]
 
         Session = sync_session_factory()
@@ -89,7 +89,7 @@ def generate_buyer_embedding(self, buyer_id: str) -> dict:  # type: ignore[no-un
 
             name, country, hs_codes, description = row
             buyer_text = (
-                f"passage: International buyer {name} from {country}. "
+                f"International buyer {name} from {country}. "
                 f"Imports products: {', '.join(hs_codes or [])}. "
                 f"{description or ''}"
             )

@@ -228,40 +228,34 @@ class HSCodeResult:
 
 
 class HSCodeClassifierService:
-    """Multilingual semantic classifier — singleton, lazy-loaded."""
+    """Multilingual semantic classifier — singleton, lazy-loaded.
 
-    MODEL_NAME = "intfloat/multilingual-e5-large"
+    Uses the configured embedding provider (Gemini API or local model)
+    via the shared embedder factory.
+    """
 
     def __init__(self) -> None:
-        self._model = None  # lazy
+        self._embedder = None  # lazy
         self._corpus_embeddings: np.ndarray | None = None
         self._corpus_keys: list[str] = list(HS_CORPUS.keys())
 
     def _ensure_loaded(self) -> None:
-        if self._model is not None:
+        if self._embedder is not None:
             return
-        # Local import — sentence-transformers is heavy
-        from sentence_transformers import SentenceTransformer
+        from matching_service.infrastructure.embeddings.sentence_transformer import get_embedder
 
-        from matching_service.core.config import settings
-
-        log.info("hs_classifier.model.loading", model=self.MODEL_NAME)
-        self._model = SentenceTransformer(self.MODEL_NAME, token=settings.hf_token)
-        corpus_texts = [f"passage: {desc}" for desc in HS_CORPUS.values()]
-        self._corpus_embeddings = self._model.encode(  # type: ignore[union-attr]
-            corpus_texts,
-            normalize_embeddings=True,
-            batch_size=32,
-            show_progress_bar=False,
-        )
+        self._embedder = get_embedder()
+        log.info("hs_classifier.model.loading", model=self._embedder.model_name)
+        corpus_texts = list(HS_CORPUS.values())
+        corpus_vecs = self._embedder.embed_sync(corpus_texts)
+        self._corpus_embeddings = np.array(corpus_vecs)
         log.info("hs_classifier.corpus.precomputed", size=len(HS_CORPUS))
 
     def classify(self, product_description: str, top_k: int = 3) -> HSCodeResult:
         self._ensure_loaded()
-        assert self._model is not None and self._corpus_embeddings is not None
+        assert self._embedder is not None and self._corpus_embeddings is not None
 
-        query_text = f"query: {product_description}"
-        query_embedding = self._model.encode(query_text, normalize_embeddings=True)
+        query_embedding = np.array(self._embedder.embed_sync([product_description])[0])
 
         # Cosine similarity (since both sides are normalized -> dot product)
         similarities = np.dot(self._corpus_embeddings, query_embedding)

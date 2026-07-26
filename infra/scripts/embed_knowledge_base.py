@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
-"""Embed knowledge base documents into pgvector.
+"""Embed knowledge base documents into pgvector via Gemini API.
 
 Reads all export_knowledge_base rows that lack embeddings, chunks long content
-into ≤512-token segments, generates embeddings using the same multilingual-e5-large
-model used by the matching-service, and writes results back to the DB.
+into ≤512-token segments, generates embeddings using Gemini Embedding 2 API,
+and writes results back to the DB.
 
 Usage:
-    # With local Python (requires deps: psycopg, sentence-transformers)
+    # With local Python (requires deps: psycopg, google-genai)
     python infra/scripts/embed_knowledge_base.py
 
-    # Via Docker (if matching-service container is running)
-    docker exec -it matching-service python /scripts/embed_knowledge_base.py
-
 Environment variables (read from .env or shell):
-    DATABASE_URL_SYNC  — psycopg-compatible DB URL (default: postgresql+psycopg://...)
-    EMBEDDING_MODEL    — HuggingFace model ID (default: intfloat/multilingual-e5-large)
-    HF_TOKEN           — optional HuggingFace auth token for gated models
-    CHUNK_SIZE         — max characters per chunk (default: 1800, ~512 tokens)
-    CHUNK_OVERLAP      — overlap between chunks in characters (default: 200)
+    DATABASE_URL_SYNC    — psycopg-compatible DB URL
+    GEMINI_API_KEY       — Google Gemini API key
+    EMBEDDING_MODEL      — Gemini model ID (default: gemini-embedding-2)
+    EMBEDDING_DIMENSIONS — output dimensionality (default: 1024)
+    CHUNK_SIZE           — max characters per chunk (default: 1800, ~512 tokens)
+    CHUNK_OVERLAP        — overlap between chunks in characters (default: 200)
 """
 from __future__ import annotations
 
@@ -40,8 +38,9 @@ DATABASE_URL = os.environ.get(
     "postgresql+psycopg://tc_user:tc_pass_dev@localhost:5432/tradeconnect",
 ).replace("postgresql+psycopg://", "postgresql://")
 
-EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-large")
-HF_TOKEN = os.environ.get("HF_TOKEN") or None
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "gemini-embedding-2")
+EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", "1024"))
 CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", "1800"))
 CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "200"))
 
@@ -83,6 +82,22 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
     return chunks
 
 
+def embed_texts(client, texts: list[str]) -> list[list[float]]:
+    """Generate embeddings for a list of texts using Gemini API."""
+    results: list[list[float]] = []
+    batch_size = 100  # Gemini limit per request
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+        result = client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=batch,
+            config={"output_dimensionality": EMBEDDING_DIMENSIONS},
+        )
+        for emb in result.embeddings:
+            results.append(list(emb.values))
+    return results
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -92,23 +107,25 @@ def main() -> None:
         raise SystemExit("psycopg not installed. Run: pip install psycopg[binary]")
 
     try:
-        from sentence_transformers import SentenceTransformer
+        from google import genai
     except ImportError:
         raise SystemExit(
-            "sentence-transformers not installed. "
-            "Run: pip install sentence-transformers"
+            "google-genai not installed. "
+            "Run: pip install google-genai"
+        )
+
+    if not GEMINI_API_KEY:
+        raise SystemExit(
+            "GEMINI_API_KEY not set. "
+            "Set it in .env or as an environment variable."
         )
 
     print(f"Connecting to DB: {DATABASE_URL[:40]}...")
     conn = psycopg.connect(DATABASE_URL)
 
-    print(f"Loading embedding model: {EMBEDDING_MODEL}")
-    model = SentenceTransformer(
-        EMBEDDING_MODEL,
-        use_auth_token=HF_TOKEN,
-        device="cpu",
-    )
-    print("Model loaded.")
+    print(f"Initializing Gemini client with model: {EMBEDDING_MODEL}")
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    print(f"Client ready. Output dimensions: {EMBEDDING_DIMENSIONS}")
 
     # Fetch rows without embeddings
     with conn.cursor() as cur:
@@ -127,13 +144,13 @@ def main() -> None:
 
     processed = 0
     for row_id, title, content, category in rows:
-        # Build text to embed: prefix per E5 convention + title + content chunk
+        # Build text to embed: title + content chunk
         chunks = chunk_text(content)
         print(f"  [{category}] '{title[:60]}' → {len(chunks)} chunk(s)")
 
         for i, chunk in enumerate(chunks):
-            passage = f"passage: {title}\n\n{chunk}"
-            embedding: list[float] = model.encode(passage, normalize_embeddings=True).tolist()
+            passage = f"{title}\n\n{chunk}"
+            embedding = embed_texts(client, [passage])[0]
             vec_str = "[" + ",".join(f"{v:.8f}" for v in embedding) + "]"
 
             if i == 0 and len(chunks) == 1:
@@ -169,7 +186,7 @@ def main() -> None:
         processed += 1
         if processed % 5 == 0:
             print(f"  Progress: {processed}/{len(rows)} rows embedded")
-        time.sleep(0.05)  # brief pause to avoid CPU spike on small machines
+        time.sleep(0.05)  # brief pause to respect rate limits
 
     print(f"\nDone. Embedded {processed} knowledge base entries.")
 
