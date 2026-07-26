@@ -1,0 +1,286 @@
+# ============================================================
+# TradeConnect — Render Blueprint (Infrastructure as Code)
+# ------------------------------------------------------------
+# Repo root for this blueprint IS this directory (tradeconnect/), which is the
+# root of the Backend_PIDI_Digdaya-Hackathon git repo. All paths below are
+# relative to it.
+#
+# Deploys the full hybrid microservice backend:
+#   3 NestJS web services + 2 FastAPI web services + 3 Celery workers + Redis
+#
+# Postgres is NOT provisioned here — it lives on Supabase (pgvector).
+#   -> Set DATABASE_URL / DATABASE_URL_ASYNC / DATABASE_URL_SYNC in the
+#      "tc-shared" env group after the first deploy.
+#
+# NOTE: Web services + workers require a paid plan on Render (workers are not
+# available on free). `starter` is the cheapest always-on tier.
+# ============================================================
+
+# ─────────────────────────────────────────────────────────────
+# Shared environment group.
+# Secrets are `sync: false` → you fill them in the Render dashboard once.
+# Non-secret config has inline values.
+# ─────────────────────────────────────────────────────────────
+envVarGroups:
+  - name: tc-shared
+    envVars:
+      # ── Database (Supabase) — paste real values in dashboard ──
+      - key: DATABASE_URL          # Node/Drizzle  (postgres://...)
+        sync: false
+      - key: DATABASE_URL_ASYNC    # Python asyncpg (postgresql+asyncpg://...)
+        sync: false
+      - key: DATABASE_URL_SYNC     # Python psycopg (postgresql+psycopg://...)
+        sync: false
+
+      # ── Security ──
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_ACCESS_TOKEN_EXPIRES
+        value: 30m
+      - key: JWT_REFRESH_TOKEN_EXPIRES
+        value: 14d
+
+      # ── AI providers (secrets) ──
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+
+      # ── AI model config (non-secret) ──
+      - key: LLM_MODEL
+        value: claude-haiku-4-5-20251001
+      - key: LLM_TEMPERATURE
+        value: "0.3"
+      - key: LLM_MAX_TOKENS
+        value: "2048"
+      - key: EMBEDDING_PROVIDER
+        value: gemini
+      - key: EMBEDDING_MODEL
+        value: gemini-embedding-2
+      - key: EMBEDDING_DIMENSIONS
+        value: "1024"
+      - key: GEMINI_MODEL
+        value: gemini-3.1-flash-lite
+      - key: GEMINI_FALLBACK_MODELS
+        value: gemini-flash-lite-latest,gemini-3.5-flash
+
+      # ── Indonesian gov / global trade APIs (secrets) ──
+      - key: INSW_TOKEN
+        sync: false
+      - key: OSS_PUBLIC_USER_KEY
+        sync: false
+      - key: OSS_PUBLIC_RECAPTCHA_RESPONSE
+        sync: false
+      - key: OSS_PUBLIC_COOKIE
+        sync: false
+      - key: UN_COMTRADE_API_KEY
+        sync: false
+      - key: BPS_API_KEY
+        sync: false
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: INATRADE_API_KEY
+        sync: false
+      # non-secret endpoints
+      - key: OSS_PUBLIC_NIB_URL
+        value: https://api-prd.oss.go.id/v1/reg/public/nib
+      - key: INATRADE_BASE_URL
+        value: https://inatrade.kemendag.go.id
+      - key: UN_COMTRADE_BASE_URL
+        value: https://comtradeapi.un.org/data/v1
+      - key: UN_COMTRADE_TOOLS_BASE_URL
+        value: https://comtradeapi.un.org/tools/v1
+      - key: UN_COMTRADE_PREVIEW_BASE_URL
+        value: https://comtradeapi.un.org/public/v1
+      - key: BPS_API_BASE_URL
+        value: https://webapi.bps.go.id/v1
+
+      # ── Feature flags / misc ──
+      - key: FEATURE_SEMANTIC_MATCHING
+        value: "true"
+      - key: FEATURE_RAG_NEGOTIATION
+        value: "true"
+      - key: FEATURE_FRAUD_DETECTION
+        value: "true"
+      - key: FEATURE_INATRADE_VERIFICATION
+        value: "false"
+      - key: LOG_LEVEL
+        value: info
+      # Set to your deployed frontend origin(s), comma-separated.
+      - key: CORS_ORIGINS
+        sync: false
+
+services:
+  # ══════════════════════════════════════════════════════════
+  # REDIS (Key Value) — broker for BullMQ + Celery, and cache.
+  # noeviction is REQUIRED so queued jobs are never dropped.
+  # ══════════════════════════════════════════════════════════
+  - type: keyvalue
+    name: tc-redis
+    region: singapore
+    plan: starter
+    maxmemoryPolicy: noeviction
+    ipAllowList: []          # empty = only reachable inside Render private network
+
+  # ══════════════════════════════════════════════════════════
+  # NESTJS WEB SERVICES
+  # Dockerfile context is the monorepo root (this dir) because it needs
+  # libs/shared-types.
+  # ══════════════════════════════════════════════════════════
+  - type: web
+    name: tc-gateway
+    runtime: docker
+    region: singapore
+    plan: starter
+    dockerfilePath: ./services/gateway/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: tc-shared
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: USER_SERVICE_URL
+        value: http://tc-user-service:3001
+      - key: READINESS_SERVICE_URL
+        value: http://tc-readiness-service:3002
+      - key: MATCHING_SERVICE_URL
+        value: http://tc-matching-service:8001
+      - key: COMMS_SERVICE_URL
+        value: http://tc-comms-service:8002
+      - key: BULL_REDIS_URL
+        fromService: { type: keyvalue, name: tc-redis, property: connectionString }
+
+  - type: web
+    name: tc-user-service
+    runtime: docker
+    region: singapore
+    plan: starter
+    dockerfilePath: ./services/user-service/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: tc-shared
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3001"
+      - key: READINESS_SERVICE_URL
+        value: http://tc-readiness-service:3002
+      - key: MATCHING_SERVICE_URL
+        value: http://tc-matching-service:8001
+      - key: BULL_REDIS_URL
+        fromService: { type: keyvalue, name: tc-redis, property: connectionString }
+
+  - type: web
+    name: tc-readiness-service
+    runtime: docker
+    region: singapore
+    plan: starter
+    dockerfilePath: ./services/readiness-service/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: tc-shared
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3002"
+
+  # ══════════════════════════════════════════════════════════
+  # PYTHON (FastAPI) WEB SERVICES
+  # Dockerfile context is the service's own directory.
+  # ══════════════════════════════════════════════════════════
+  - type: web
+    name: tc-matching-service
+    runtime: docker
+    region: singapore
+    plan: starter
+    dockerfilePath: ./services/matching-service/Dockerfile
+    dockerContext: ./services/matching-service
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: tc-shared
+      - key: APP_ENV
+        value: production
+      - key: PORT             # uvicorn in the image listens on 8001
+        value: "8001"
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: tc-redis, property: connectionString }
+      - key: CELERY_BROKER_URL
+        fromService: { type: keyvalue, name: tc-redis, property: connectionString }
+      - key: CELERY_RESULT_BACKEND
+        fromService: { type: keyvalue, name: tc-redis, property: connectionString }
+
+  - type: web
+    name: tc-comms-service
+    runtime: docker
+    region: singapore
+    plan: starter
+    dockerfilePath: ./services/comms-service/Dockerfile
+    dockerContext: ./services/comms-service
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: tc-shared
+      - key: APP_ENV
+        value: production
+      - key: PORT             # uvicorn in the image listens on 8002
+        value: "8002"
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: tc-redis, property: connectionString }
+
+  # ══════════════════════════════════════════════════════════
+  # CELERY WORKERS (no inbound port → type: worker)
+  # dockerCommand overrides the image CMD to pin the queue.
+  # ══════════════════════════════════════════════════════════
+  - type: worker
+    name: tc-embedding-worker
+    runtime: docker
+    region: singapore
+    plan: starter
+    dockerfilePath: ./services/matching-service/Dockerfile
+    dockerContext: ./services/matching-service
+    dockerCommand: celery -A matching_service.infrastructure.workers.celery_app worker -Q ai -l info --concurrency=2
+    envVars:
+      - fromGroup: tc-shared
+      - key: CELERY_BROKER_URL
+        fromService: { type: keyvalue, name: tc-redis, property: connectionString }
+      - key: CELERY_RESULT_BACKEND
+        fromService: { type: keyvalue, name: tc-redis, property: connectionString }
+
+  - type: worker
+    name: tc-verification-worker
+    runtime: docker
+    region: singapore
+    plan: starter
+    dockerfilePath: ./services/etl-worker/Dockerfile
+    dockerContext: ./services/etl-worker
+    dockerCommand: celery -A etl_worker.celery_app worker -Q external -l info --concurrency=4
+    envVars:
+      - fromGroup: tc-shared
+      - key: CELERY_BROKER_URL
+        fromService: { type: keyvalue, name: tc-redis, property: connectionString }
+      - key: CELERY_RESULT_BACKEND
+        fromService: { type: keyvalue, name: tc-redis, property: connectionString }
+
+  - type: worker
+    name: tc-etl-worker
+    runtime: docker
+    region: singapore
+    plan: starter
+    dockerfilePath: ./services/etl-worker/Dockerfile
+    dockerContext: ./services/etl-worker
+    dockerCommand: celery -A etl_worker.celery_app worker -Q ingest -l info --concurrency=2
+    envVars:
+      - fromGroup: tc-shared
+      - key: CELERY_BROKER_URL
+        fromService: { type: keyvalue, name: tc-redis, property: connectionString }
+      - key: CELERY_RESULT_BACKEND
+        fromService: { type: keyvalue, name: tc-redis, property: connectionString }
