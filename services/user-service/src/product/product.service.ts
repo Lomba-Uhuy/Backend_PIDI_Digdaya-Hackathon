@@ -99,6 +99,17 @@ export class ProductService {
       .returning();
     if (!updated) throw new NotFoundException(`Product ${productId} not found`);
 
+    // The HS classification (and everything derived from it) is a function of the
+    // product name + description. If either changed, re-run the initialization
+    // workflow so the persisted HS code no longer reflects the old product — this
+    // is what keeps the AI consultation / market intelligence in sync after a
+    // product is re-onboarded or edited.
+    const nameChanged = dto.name !== undefined && dto.name !== existing.name;
+    const descChanged = dto.description !== undefined && dto.description !== existing.description;
+    if (nameChanged || descChanged) {
+      void this.workflow.rerunForProduct(productId, umkmId);
+    }
+
     const { hpp: _hpp, ...safe } = updated;
     return safe as Product;
   }
