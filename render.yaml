@@ -284,3 +284,24 @@ services:
         fromService: { type: keyvalue, name: tc-redis, property: connectionString }
       - key: CELERY_RESULT_BACKEND
         fromService: { type: keyvalue, name: tc-redis, property: connectionString }
+
+  # ══════════════════════════════════════════════════════════
+  # ONE-SHOT SEEDER — embed the export knowledge base into pgvector via Gemini.
+  # Uses a tiny dedicated image (infra/scripts/Dockerfile). `type: cron` with a
+  # never-firing schedule → run it manually via "Trigger Run" in the dashboard
+  # once, after the DB is seeded. Idempotent (skips rows already embedded).
+  # ══════════════════════════════════════════════════════════
+  - type: cron
+    name: tc-kb-embedder
+    runtime: docker
+    region: singapore
+    plan: starter
+    schedule: "0 0 31 2 *"       # 31 February = never; trigger manually
+    dockerfilePath: ./infra/scripts/Dockerfile
+    dockerContext: ./infra/scripts
+    envVars:
+      - fromGroup: tc-shared      # provides DATABASE_URL_SYNC, GEMINI_API_KEY, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS
+      - key: CHUNK_SIZE
+        value: "1800"
+      - key: CHUNK_OVERLAP
+        value: "200"
