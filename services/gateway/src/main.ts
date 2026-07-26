@@ -39,9 +39,29 @@ async function bootstrap(): Promise<void> {
   );
 
   const config = app.get(ConfigService);
-  const corsOrigins = (config.get<string>('CORS_ORIGINS') ?? '').split(',').filter(Boolean);
+  const corsOrigins = (config.get<string>('CORS_ORIGINS') ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  // Always allow localhost, private LAN IPs, and VS Code dev tunnels / GitHub
+  // Codespaces — on top of any explicit CORS_ORIGINS allowlist. This lets the app
+  // be reached via VS Code "Forward a Port" without editing config.
+  const TUNNEL_HOST = /(\.devtunnels\.ms|\.devtunnel\.ms|\.app\.github\.dev)$/i;
+  const LAN_ORIGIN =
+    /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/i;
   app.enableCors({
-    origin: corsOrigins.length > 0 ? corsOrigins : true,
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // same-origin, curl, server-to-server
+      if (corsOrigins.includes(origin)) return cb(null, true);
+      if (LAN_ORIGIN.test(origin)) return cb(null, true);
+      try {
+        if (TUNNEL_HOST.test(new URL(origin).hostname)) return cb(null, true);
+      } catch {
+        /* malformed origin — fall through */
+      }
+      if (corsOrigins.length === 0) return cb(null, true); // no allowlist → dev-open
+      return cb(new Error(`Origin ${origin} not allowed by CORS`), false);
+    },
     credentials: true,
   });
 
